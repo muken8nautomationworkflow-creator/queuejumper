@@ -395,29 +395,43 @@ function normalizeAppointmentInput(body = {}) {
 async function sendAppointmentToN8n({ dashboard, appointment }) {
   if (!n8nAppointmentWebhookUrl) {
     console.log(`[mock:n8n] Appointment request for ${dashboard.name}: ${appointment.name} ${appointment.preferredAt}`);
-    return { ok: true, provider: "mock", id: `mock-${appointment.id}` };
+    return { ok: true, provider: "mock", status: "mock_started", id: `mock-${appointment.id}` };
   }
 
-  const response = await fetch(n8nAppointmentWebhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      source: "queue-jumper",
-      shop: {
-        id: dashboard.id,
-        slug: dashboard.slug,
-        name: dashboard.name,
-        location: dashboard.location,
-      },
-      appointment,
-    }),
-  });
+  try {
+    const response = await fetch(n8nAppointmentWebhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "queue-jumper",
+        shop: {
+          id: dashboard.id,
+          slug: dashboard.slug,
+          name: dashboard.name,
+          location: dashboard.location,
+        },
+        appointment,
+      }),
+    });
 
-  if (!response.ok) {
-    return { ok: false, provider: "n8n", error: `n8n webhook returned ${response.status}` };
+    if (!response.ok) {
+      return {
+        ok: false,
+        provider: "n8n",
+        status: "agent_failed",
+        error: `n8n webhook returned ${response.status}. Use the active Production POST webhook URL in Railway.`,
+      };
+    }
+
+    return { ok: true, provider: "n8n", status: "agent_started" };
+  } catch (error) {
+    return {
+      ok: false,
+      provider: "n8n",
+      status: "agent_failed",
+      error: `n8n webhook could not be reached: ${error.message}`,
+    };
   }
-
-  return { ok: true, provider: "n8n" };
 }
 
 function findActiveDuplicate(state, input) {
@@ -911,17 +925,21 @@ app.post("/api/appointments/:slug", async (req, res) => {
   };
 
   const result = await sendAppointmentToN8n({ dashboard, appointment });
-  if (!result.ok) {
-    res.status(502).json({ ok: false, error: result.error });
-    return;
-  }
+  appointment.status = result.ok ? (result.status || "requested") : (result.status || "agent_failed");
+  appointment.agentError = result.ok ? "" : result.error;
 
   state.appointments = [appointment, ...(state.appointments || [])].slice(0, 20);
-  makeNotification(state, `${appointment.ticket} requested appointment for ${appointment.preferredAt}.`);
+  makeNotification(
+    state,
+    result.ok
+      ? `${appointment.ticket} requested appointment for ${appointment.preferredAt}.`
+      : `${appointment.ticket} appointment saved, but n8n agent needs attention.`,
+  );
   emitDashboardUpdate(dashboard.id);
-  res.status(201).json({
+  res.status(result.ok ? 201 : 202).json({
     ok: true,
     provider: result.provider,
+    warning: result.ok ? "" : result.error,
     customer: {
       ticket: appointment.ticket,
       appointmentId: appointment.id,
