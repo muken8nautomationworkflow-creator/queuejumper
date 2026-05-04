@@ -17,6 +17,7 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - Customer phone capture for SMS/WhatsApp return alerts.
 - Owner Notify button, analytics screen, printable QR poster, and per-service queue filters.
 - VIP booking subscription plans with VIP-first queue priority.
+- No-show customers can rejoin directly after the next waiting ticket.
 
 ## Railway Environment
 

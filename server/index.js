@@ -386,6 +386,18 @@ function enqueueCustomer(state, customer) {
   state.queue.splice(lastVipIndex + 1, 0, customer);
 }
 
+function rejoinAfterNext(state, customer) {
+  const restored = {
+    ...customer,
+    reason: undefined,
+    completedAt: undefined,
+    rejoinedAt: new Date().toISOString(),
+    status: state.queue.length <= 1 ? "waiting" : customer.status,
+  };
+  const insertIndex = Math.min(1, state.queue.length);
+  state.queue.splice(insertIndex, 0, restored);
+}
+
 function isRateLimited(req) {
   const key = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
   const now = Date.now();
@@ -991,6 +1003,29 @@ io.on("connection", (socket) => {
     const [removed] = state.queue.splice(index, 1);
     state.completed = [{ ...removed, completedAt: new Date().toISOString(), reason }, ...state.completed].slice(0, 8);
     makeNotification(state, `${removed.ticket} marked ${reason}.`);
+    emitDashboardUpdate(dashboard.id);
+  });
+
+  socket.on("owner:rejoin", (payload = {}) => {
+    if (!isOwnerAuthorized(socket, payload)) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const { ticket } = payload;
+    const shopId = payloadShopId(payload, activeShopId);
+    const dashboard = getDashboard(shopId ?? activeShopId);
+    const state = getState(dashboard.id);
+    const completedIndex = state.completed.findIndex((customer) => customer.ticket === ticket && customer.reason === "no-show");
+    if (completedIndex === -1) return;
+
+    const [customer] = state.completed.splice(completedIndex, 1);
+    rejoinAfterNext(state, customer);
+    state.queue = state.queue.map((item, index) => ({
+      ...item,
+      status: index === 0 ? "next" : "waiting",
+    }));
+    makeNotification(state, `${customer.ticket} rejoined after the next customer.`);
     emitDashboardUpdate(dashboard.id);
   });
 });

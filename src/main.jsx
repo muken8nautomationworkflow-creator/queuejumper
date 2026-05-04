@@ -369,6 +369,14 @@ function QueueTable({ queue, activeDashboard }) {
                   >
                     <Bell size={18} />
                   </button>
+                  <button
+                    className="row-action"
+                    aria-label={`Mark ${customer.name} no-show`}
+                    type="button"
+                    onClick={() => socket.emit("owner:remove", { token: ownerToken, shopId: activeDashboard.id, ticket: customer.ticket, reason: "no-show" })}
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -379,6 +387,37 @@ function QueueTable({ queue, activeDashboard }) {
         <span className="dot" />
         Auto-updates in real time
       </div>
+    </section>
+  );
+}
+
+function NoShowPanel({ completed, activeDashboard }) {
+  const noShows = (completed || []).filter((customer) => customer.reason === "no-show");
+  if (noShows.length === 0) return null;
+
+  return (
+    <section className="queue-panel no-show-panel">
+      <div className="panel-header">
+        <div className="panel-title">
+          <RotateCcw size={18} />
+          <h2>No-show rejoin</h2>
+          <span>{noShows.length}</span>
+        </div>
+      </div>
+      {noShows.map((customer) => (
+        <div className="service-summary-row" key={customer.ticket}>
+          <strong>{customer.name}</strong>
+          <span>{customer.ticket}</span>
+          <span>{customer.service}</span>
+          <button
+            className="secondary-button compact"
+            type="button"
+            onClick={() => socket.emit("owner:rejoin", { token: ownerToken, shopId: activeDashboard.id, ticket: customer.ticket })}
+          >
+            Rejoin after next
+          </button>
+        </div>
+      ))}
     </section>
   );
 }
@@ -659,7 +698,7 @@ function CustomerJoinView({ activeDashboard, queue, connected }) {
 function App() {
   const isCustomerView = window.location.pathname.startsWith("/join");
   const initialDashboardId = isCustomerView ? shopIdFromPath() : "milos";
-  const { dashboards, activeDashboard, serving, queue, analytics, connected } = useQueueSocket(initialDashboardId);
+  const { dashboards, activeDashboard, serving, queue, completed, analytics, connected } = useQueueSocket(initialDashboardId);
   const activeSection = useActiveSection();
   const [signedOut, setSignedOut] = useState(false);
   const previewCustomer = queue[2] ?? queue[0];
@@ -700,6 +739,7 @@ function App() {
                   <NextCard activeDashboard={activeDashboard} nextCustomer={queue[0]} />
                 </div>
                 <QueueTable queue={queue} activeDashboard={activeDashboard} />
+                <NoShowPanel completed={completed} activeDashboard={activeDashboard} />
               </section>
               <QRCard activeDashboard={activeDashboard} customerTicket={previewCustomer?.ticket ?? "Done"} />
               <PhonePreview activeDashboard={activeDashboard} queue={queue} connected={connected} />

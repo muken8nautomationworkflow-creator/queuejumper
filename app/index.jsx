@@ -594,7 +594,7 @@ function AuthScreen({ onAuthenticate }) {
 }
 
 export default function QueueJumperApp() {
-  const { dashboards, activeDashboard, serving, queue, analytics, connected, socket } = useQueueSocket();
+  const { dashboards, activeDashboard, serving, queue, completed, analytics, connected, socket } = useQueueSocket();
   const [section, setSection] = useState("queue");
   const [session, setSession] = useState(null);
   const [walkInName, setWalkInName] = useState("");
@@ -605,6 +605,7 @@ export default function QueueJumperApp() {
   const [serviceFilter, setServiceFilter] = useState("All");
   const nextCustomer = queue[0];
   const previewCustomer = queue[2] ?? queue[0];
+  const noShowCustomers = (completed || []).filter((customer) => customer.reason === "no-show");
   const joinUrl = `${customerBaseUrl}/join/${activeDashboard.slug}`;
   const serviceOptions = useMemo(() => ["All", ...new Set([activeDashboard.serviceLabel, ...(activeDashboard.serviceOptions || []), ...queue.map((customer) => customer.service)].filter(Boolean))], [activeDashboard, queue]);
   const visibleQueue = serviceFilter === "All" ? queue : queue.filter((customer) => customer.service === serviceFilter);
@@ -674,6 +675,13 @@ export default function QueueJumperApp() {
       shopId: activeDashboard.id,
       ticket,
       reason: "no-show",
+    });
+  }
+
+  function rejoinCustomer(ticket) {
+    emitOwnerAction("owner:rejoin", {
+      shopId: activeDashboard.id,
+      ticket,
     });
   }
 
@@ -887,6 +895,37 @@ export default function QueueJumperApp() {
               ))
             )}
           </View>
+
+          {noShowCustomers.length > 0 && (
+            <View style={styles.panel}>
+              <View style={styles.panelHeader}>
+                <Text selectable style={styles.sectionTitle}>
+                  No-show rejoin
+                </Text>
+                <Text selectable style={styles.countText}>
+                  {noShowCustomers.length}
+                </Text>
+              </View>
+              <Text selectable style={styles.previewCopy}>
+                If a customer returns late, put them back after the next waiting ticket.
+              </Text>
+              {noShowCustomers.map((customer) => (
+                <View key={customer.ticket} style={styles.rejoinRow}>
+                  <View style={styles.queueDetails}>
+                    <Text selectable style={styles.customerName}>
+                      {customer.name}
+                    </Text>
+                    <Text selectable style={styles.serviceText}>
+                      {customer.ticket} - {customer.service}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => rejoinCustomer(customer.ticket)} style={[styles.rejoinButton, { borderColor: activeDashboard.accent }]}>
+                    <Text style={[styles.rejoinButtonText, { color: activeDashboard.accent }]}>Rejoin after next</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          )}
 
           <CustomerPreview activeDashboard={activeDashboard} queue={queue} connected={connected} />
         </>
@@ -1354,6 +1393,29 @@ const styles = {
     borderTopWidth: 1,
     borderTopColor: "#edf1f5",
     paddingVertical: 12,
+  },
+  rejoinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f5",
+    paddingVertical: 12,
+  },
+  rejoinButton: {
+    minHeight: 38,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    flexShrink: 0,
+  },
+  rejoinButtonText: {
+    fontSize: 12,
+    fontWeight: "900",
   },
   notificationRow: {
     borderTopWidth: 1,

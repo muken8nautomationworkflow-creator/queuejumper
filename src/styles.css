@@ -561,6 +561,11 @@ td:nth-child(2) {
   background: #fff;
   display: grid;
   place-items: center;
+  margin-right: 6px;
+}
+
+.row-action:disabled {
+  opacity: 0.45;
 }
 
 .panel-foot {
@@ -656,6 +661,16 @@ td:nth-child(2) {
 
 .secondary-button {
   width: 100%;
+}
+
+.secondary-button.compact {
+  width: auto;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.no-show-panel {
+  overflow: hidden;
 }
 
 .phone-shell {
