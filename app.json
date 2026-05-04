@@ -12,9 +12,18 @@
       "versionCode": 1,
       "softwareKeyboardLayoutMode": "resize"
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router"
+    ],
     "experiments": {
       "typedRoutes": false
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "260ecd5e-3895-4e71-9377-16e274d87330"
+      }
+    },
+    "owner": "muken8n"
   }
 }
