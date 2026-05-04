@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Queue Jumper",
+    "slug": "queue-jumper",
+    "scheme": "queuejumper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "android": {
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
