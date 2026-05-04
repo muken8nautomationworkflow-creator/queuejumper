@@ -16,6 +16,7 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - Postgres persistence through `DATABASE_URL`, with JSON file fallback for local testing.
 - Customer phone capture for SMS/WhatsApp return alerts.
 - Owner Notify button, analytics screen, printable QR poster, and per-service queue filters.
+- VIP booking subscription plans with VIP-first queue priority.
 
 ## Railway Environment
 

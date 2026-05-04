@@ -39,6 +39,10 @@ const fallbackDashboards = [
     location: "18 Market Lane",
     serviceLabel: "Haircut",
     serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
+    vipPlans: [
+      { id: "priority", name: "Priority Pass", price: "$9/mo", perk: "VIP queue priority" },
+      { id: "unlimited", name: "Unlimited VIP", price: "$29/mo", perk: "Priority plus recurring bookings" },
+    ],
     accent: "#22b157",
   },
 ];
@@ -116,7 +120,7 @@ function useQueueSocket(initialDashboardId = "milos") {
     serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
     queue: [],
     completed: [],
-    analytics: { waiting: 0, servedToday: 0, noShows: 0, notified: 0, averageWait: 0, serviceQueues: [] },
+    analytics: { waiting: 0, servedToday: 0, noShows: 0, notified: 0, vipWaiting: 0, vipServed: 0, averageWait: 0, serviceQueues: [] },
     updatedAt: new Date().toISOString(),
   });
   const [connected, setConnected] = useState(socket.connected);
@@ -346,6 +350,7 @@ function QueueTable({ queue, activeDashboard }) {
                     {customer.name.split(" ").map((part) => part[0]).join("")}
                   </span>
                   {customer.name}
+                  {customer.isVip && <span className="vip-pill">VIP</span>}
                 </td>
                 <td className="ticket">{customer.ticket}</td>
                 <td>{customer.service}</td>
@@ -385,6 +390,8 @@ function AnalyticsPanel({ analytics }) {
     ["Avg wait", `${analytics.averageWait ?? 0} min`],
     ["No-shows", analytics.noShows ?? 0],
     ["Notified", analytics.notified ?? 0],
+    ["VIP waiting", analytics.vipWaiting ?? 0],
+    ["VIP served", analytics.vipServed ?? 0],
   ];
 
   return (
@@ -516,6 +523,18 @@ function SettingsPanel({ activeDashboard }) {
               <span>Temporarily stop customers from joining the line.</span>
             </div>
             <button className="toggle" type="button" aria-label="Pause new check-ins disabled" />
+          </div>
+        </section>
+        <section className="settings-panel full">
+          <h2>VIP booking subscriptions</h2>
+          <div className="plan-grid">
+            {(activeDashboard.vipPlans || []).map((plan) => (
+              <div className="plan-card" key={plan.id}>
+                <strong>{plan.name}</strong>
+                <span>{plan.perk}</span>
+                <b>{plan.price}</b>
+              </div>
+            ))}
           </div>
         </section>
         <section className="settings-panel full">

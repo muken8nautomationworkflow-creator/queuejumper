@@ -40,6 +40,10 @@ const fallbackDashboards = [
     location: "18 Market Lane",
     serviceLabel: "Haircut",
     serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
+    vipPlans: [
+      { id: "priority", name: "Priority Pass", price: "$9/mo", perk: "VIP queue priority" },
+      { id: "unlimited", name: "Unlimited VIP", price: "$29/mo", perk: "Priority plus recurring bookings" },
+    ],
     accent: "#22b157",
   },
 ];
@@ -55,6 +59,8 @@ const fallbackState = {
     servedToday: 0,
     noShows: 0,
     notified: 0,
+    vipWaiting: 0,
+    vipServed: 0,
     averageWait: 0,
     serviceQueues: [],
   },
@@ -194,6 +200,11 @@ function QueueRow({ item, index, accent, onNoShow, onNotify }) {
         <Text selectable style={styles.customerName}>
           {item.name}
         </Text>
+        {item.isVip && (
+          <Text selectable style={styles.vipBadge}>
+            VIP {item.vipPlan ? `- ${item.vipPlan}` : ""}
+          </Text>
+        )}
         <Text selectable style={styles.serviceText}>
           {item.service}
         </Text>
@@ -401,6 +412,8 @@ function AnalyticsView({ analytics, activeDashboard }) {
     { label: "Avg wait", value: `${analytics.averageWait ?? 0} min` },
     { label: "No-shows", value: analytics.noShows ?? 0 },
     { label: "Notified", value: analytics.notified ?? 0 },
+    { label: "VIP waiting", value: analytics.vipWaiting ?? 0 },
+    { label: "VIP served", value: analytics.vipServed ?? 0 },
   ];
 
   return (
@@ -587,6 +600,8 @@ export default function QueueJumperApp() {
   const [walkInName, setWalkInName] = useState("");
   const [walkInPhone, setWalkInPhone] = useState("");
   const [walkInService, setWalkInService] = useState("");
+  const [walkInVip, setWalkInVip] = useState(false);
+  const [walkInVipPlan, setWalkInVipPlan] = useState("priority");
   const [serviceFilter, setServiceFilter] = useState("All");
   const nextCustomer = queue[0];
   const previewCustomer = queue[2] ?? queue[0];
@@ -636,10 +651,13 @@ export default function QueueJumperApp() {
       name: walkInName || "Walk-in Customer",
       phone: walkInPhone,
       service: walkInService || activeDashboard.serviceLabel,
+      isVip: walkInVip,
+      vipPlan: walkInVip ? walkInVipPlan : "",
     });
     setWalkInName("");
     setWalkInPhone("");
     setWalkInService("");
+    setWalkInVip(false);
   }
 
   function notifyCustomer(ticket) {
@@ -694,17 +712,36 @@ export default function QueueJumperApp() {
       ) : section === "analytics" ? (
         <AnalyticsView analytics={analytics || fallbackState.analytics} activeDashboard={activeDashboard} />
       ) : section === "settings" ? (
-        <View style={styles.panel}>
-          <Text selectable style={styles.sectionTitle}>
-            Settings
-          </Text>
-          <TextInput editable={false} value={activeDashboard.name} style={styles.input} />
-          <TextInput editable={false} value={activeDashboard.location} style={styles.input} />
-          <TextInput editable={false} value={joinUrl} style={styles.input} />
-          <Text selectable style={styles.previewCopy}>
-            Customers see realtime rank changes as soon as the owner taps Next customer.
-          </Text>
-        </View>
+        <>
+          <View style={styles.panel}>
+            <Text selectable style={styles.sectionTitle}>
+              Settings
+            </Text>
+            <TextInput editable={false} value={activeDashboard.name} style={styles.input} />
+            <TextInput editable={false} value={activeDashboard.location} style={styles.input} />
+            <TextInput editable={false} value={joinUrl} style={styles.input} />
+            <Text selectable style={styles.previewCopy}>
+              Customers see realtime rank changes as soon as the owner taps Next customer.
+            </Text>
+          </View>
+          <View style={styles.panel}>
+            <Text selectable style={styles.sectionTitle}>
+              VIP booking subscriptions
+            </Text>
+            <Text selectable style={styles.previewCopy}>
+              Offer paid priority booking plans. Payment is ready for a billing provider later; the queue priority works now.
+            </Text>
+            {(activeDashboard.vipPlans || []).map((plan) => (
+              <View key={plan.id} style={styles.planCard}>
+                <View style={styles.queueDetails}>
+                  <Text selectable style={styles.customerName}>{plan.name}</Text>
+                  <Text selectable style={styles.serviceText}>{plan.perk}</Text>
+                </View>
+                <Text selectable style={[styles.ticketText, { color: activeDashboard.accent }]}>{plan.price}</Text>
+              </View>
+            ))}
+          </View>
+        </>
       ) : (
         <>
           <View style={styles.summaryGrid}>
@@ -774,6 +811,22 @@ export default function QueueJumperApp() {
             <TextInput value={walkInName} onChangeText={setWalkInName} placeholder="Walk-in name or nickname" style={styles.input} />
             <TextInput value={walkInPhone} onChangeText={setWalkInPhone} placeholder="Phone for SMS or WhatsApp" keyboardType="phone-pad" style={styles.input} />
             <TextInput value={walkInService} onChangeText={setWalkInService} placeholder={`Service, e.g. ${activeDashboard.serviceLabel}`} style={styles.input} />
+            <Pressable onPress={() => setWalkInVip((value) => !value)} style={[styles.vipToggle, walkInVip && { borderColor: activeDashboard.accent, backgroundColor: "#eefaf2" }]}>
+              <Text style={[styles.vipToggleText, walkInVip && { color: activeDashboard.accent }]}>{walkInVip ? "VIP priority enabled" : "Add as VIP booking"}</Text>
+            </Pressable>
+            {walkInVip && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceChips}>
+                {(activeDashboard.vipPlans || []).map((plan) => (
+                  <Pressable
+                    key={plan.id}
+                    onPress={() => setWalkInVipPlan(plan.id)}
+                    style={[styles.serviceChip, walkInVipPlan === plan.id && { borderColor: activeDashboard.accent, backgroundColor: "#eefaf2" }]}
+                  >
+                    <Text style={[styles.serviceChipText, walkInVipPlan === plan.id && { color: activeDashboard.accent }]}>{plan.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
             <Pressable onPress={addWalkIn} style={[styles.primaryButton, { backgroundColor: activeDashboard.accent }]}>
               <Text style={styles.primaryButtonText}>Add walk-in</Text>
             </Pressable>
@@ -1177,6 +1230,18 @@ const styles = {
     fontSize: 12,
     marginTop: 3,
   },
+  vipBadge: {
+    alignSelf: "flex-start",
+    color: "#8a5a00",
+    backgroundColor: "#fff4cf",
+    borderRadius: 6,
+    overflow: "hidden",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 4,
+  },
   actions: {
     flexDirection: "row",
     gap: 10,
@@ -1266,6 +1331,29 @@ const styles = {
   },
   pauseButtonTextOn: {
     color: "#ff5848",
+  },
+  vipToggle: {
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dce4ec",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  vipToggleText: {
+    color: "#151922",
+    fontWeight: "900",
+  },
+  planCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f5",
+    paddingVertical: 12,
   },
   notificationRow: {
     borderTopWidth: 1,

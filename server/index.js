@@ -78,6 +78,10 @@ const dashboards = [
     location: "18 Market Lane",
     serviceLabel: "Haircut",
     serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
+    vipPlans: [
+      { id: "priority", name: "Priority Pass", price: "$9/mo", perk: "VIP queue priority" },
+      { id: "unlimited", name: "Unlimited VIP", price: "$29/mo", perk: "Priority plus recurring bookings" },
+    ],
     accent: "#22b157",
     serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
     queue: [
@@ -98,6 +102,10 @@ const dashboards = [
     location: "22 Market Lane",
     serviceLabel: "Pickup",
     serviceOptions: ["Pickup", "Latte order", "Cold brew", "Pastry box"],
+    vipPlans: [
+      { id: "priority", name: "Priority Pickup", price: "$7/mo", perk: "Faster pickup lane" },
+      { id: "unlimited", name: "Daily Regular", price: "$24/mo", perk: "Priority plus daily rewards" },
+    ],
     accent: "#b26a3c",
     serving: { ticket: "C08", name: "Priya Shah", service: "Latte order" },
     queue: [
@@ -114,6 +122,10 @@ const dashboards = [
     location: "7 Grove Street",
     serviceLabel: "Manicure",
     serviceOptions: ["Manicure", "Gel manicure", "Polish change", "Nail art", "Pedicure"],
+    vipPlans: [
+      { id: "priority", name: "VIP Touch-up", price: "$12/mo", perk: "Priority nail queue" },
+      { id: "unlimited", name: "Beauty Club", price: "$35/mo", perk: "Priority plus monthly perks" },
+    ],
     accent: "#ff5848",
     serving: { ticket: "N21", name: "Harper Ellis", service: "Gel manicure" },
     queue: [
@@ -138,6 +150,10 @@ function createState(dashboard) {
     })),
     completed: [],
     notifications: [],
+    subscriptionSettings: {
+      enabled: true,
+      priorityMode: "vip-first",
+    },
     paused: false,
   };
 }
@@ -279,6 +295,8 @@ function makeAnalytics(dashboard, state) {
     servedToday: state.completed.length,
     noShows: state.completed.filter((customer) => customer.reason === "no-show").length,
     notified: state.completed.filter((customer) => customer.notifiedAt).length + state.queue.filter((customer) => customer.notifiedAt).length,
+    vipWaiting: state.queue.filter((customer) => customer.isVip).length,
+    vipServed: state.completed.filter((customer) => customer.isVip).length,
     averageWait: state.queue.length ? Math.round(state.queue.reduce((total, _customer, index) => total + waitForIndex(index), 0) / state.queue.length) : 0,
     serviceQueues,
   };
@@ -353,7 +371,19 @@ function normalizeCustomerInput(body = {}) {
   const service = String(body.service || "").trim().slice(0, 80) || "Walk-in";
   const phone = normalizePhone(body.phone);
   const pushToken = String(body.pushToken || body.fcmToken || "").trim().slice(0, 512);
-  return { name, service, phone, pushToken };
+  const vipPlan = String(body.vipPlan || "").trim().slice(0, 40);
+  const isVip = Boolean(body.isVip || vipPlan);
+  return { name, service, phone, pushToken, isVip, vipPlan };
+}
+
+function enqueueCustomer(state, customer) {
+  if (!customer.isVip || state.subscriptionSettings?.priorityMode !== "vip-first") {
+    state.queue.push(customer);
+    return;
+  }
+
+  const lastVipIndex = state.queue.findLastIndex((item) => item.isVip);
+  state.queue.splice(lastVipIndex + 1, 0, customer);
 }
 
 function isRateLimited(req) {
@@ -390,13 +420,14 @@ function getState(shopId = "milos") {
 }
 
 function publicDashboards() {
-  return dashboards.map(({ id, slug, name, location, serviceLabel, serviceOptions, accent }) => ({
+  return dashboards.map(({ id, slug, name, location, serviceLabel, serviceOptions, vipPlans, accent }) => ({
     id,
     slug,
     name,
     location,
     serviceLabel,
     serviceOptions,
+    vipPlans,
     accent,
   }));
 }
@@ -410,6 +441,7 @@ function snapshot(shopId = "milos") {
       ...publicDashboards().find((item) => item.id === dashboard.id),
       paused: Boolean(state.paused),
       notifications: state.notifications || [],
+      subscriptionSettings: state.subscriptionSettings || {},
     },
     serving: state.serving,
     queue: state.queue.map((customer, index) => ({
@@ -440,6 +472,8 @@ function publicSnapshot(shopId = "milos") {
     queue: state.queue.map((customer, index) => ({
       ticket: customer.ticket,
       initials: customerInitials(customer.name),
+      isVip: Boolean(customer.isVip),
+      vipPlan: customer.vipPlan || "",
       rank: index + 1,
       estimatedWait: waitForIndex(index),
       status: index === 0 ? "next" : "waiting",
@@ -502,6 +536,9 @@ function customerPageHtml(dashboard) {
   const safeAccent = escapeHtml(dashboard.accent);
   const serviceOptions = [...new Set([dashboard.serviceLabel, ...(dashboard.serviceOptions || []), "Walk-in", "Pickup", "Consultation"])]
     .map((service) => `<option>${escapeHtml(service)}</option>`)
+    .join("");
+  const vipOptions = (dashboard.vipPlans || [])
+    .map((plan) => `<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name)} - ${escapeHtml(plan.price)}</option>`)
     .join("");
   return `<!doctype html>
 <html lang="en">
@@ -571,6 +608,12 @@ function customerPageHtml(dashboard) {
         <label>Service
           <select name="service">
             ${serviceOptions}
+          </select>
+        </label>
+        <label>VIP booking subscription
+          <select name="vipPlan">
+            <option value="">Standard queue</option>
+            ${vipOptions}
           </select>
         </label>
         <button id="joinButton" type="submit">Join queue</button>
@@ -653,6 +696,7 @@ function customerPageHtml(dashboard) {
           name: form.get("name"),
           phone: form.get("phone"),
           service: form.get("service"),
+          vipPlan: form.get("vipPlan"),
         }),
       });
       const result = await response.json();
@@ -752,27 +796,30 @@ app.post("/api/join/:slug", (req, res) => {
     return;
   }
 
-  const { name, service, phone, pushToken } = normalizeCustomerInput(req.body);
+  const { name, service, phone, pushToken, isVip, vipPlan } = normalizeCustomerInput(req.body);
   const customer = {
     id: Date.now(),
     ticket: nextTicketFor(dashboard, state),
     name,
     phone,
     pushToken,
+    isVip,
+    vipPlan,
     service,
     joinedAt: nowLabel(),
     status: state.queue.length === 0 ? "next" : "waiting",
   };
 
-  state.queue.push(customer);
-  makeNotification(state, `${customer.ticket} joined for ${service}${phone ? " with phone on file" : ""}.`);
+  enqueueCustomer(state, customer);
+  makeNotification(state, `${customer.ticket} joined for ${service}${customer.isVip ? " as VIP" : ""}${phone ? " with phone on file" : ""}.`);
   emitDashboardUpdate(dashboard.id);
   res.status(201).json({
     ok: true,
     customer: {
       ticket: customer.ticket,
-      rank: state.queue.length,
-      estimatedWait: waitForIndex(state.queue.length - 1),
+      rank: state.queue.findIndex((item) => item.ticket === customer.ticket) + 1,
+      estimatedWait: waitForIndex(state.queue.findIndex((item) => item.ticket === customer.ticket)),
+      isVip: customer.isVip,
     },
   });
 });
@@ -877,24 +924,26 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const { name, service, phone, pushToken } = payload;
+    const { name, service, phone, pushToken, isVip, vipPlan } = payload;
     const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
-    const input = normalizeCustomerInput({ name, phone, pushToken, service: service || dashboard.serviceLabel });
+    const input = normalizeCustomerInput({ name, phone, pushToken, isVip, vipPlan, service: service || dashboard.serviceLabel });
     const customer = {
       id: Date.now(),
       ticket: nextTicketFor(dashboard, state),
       name: input.name,
       phone: input.phone,
       pushToken: input.pushToken,
+      isVip: input.isVip,
+      vipPlan: input.vipPlan,
       service: input.service,
       joinedAt: nowLabel(),
       status: state.queue.length === 0 ? "next" : "waiting",
     };
 
-    state.queue.push(customer);
-    makeNotification(state, `${customer.ticket} was added by owner.`);
+    enqueueCustomer(state, customer);
+    makeNotification(state, `${customer.ticket} was added by owner${customer.isVip ? " as VIP" : ""}.`);
     emitDashboardUpdate(dashboard.id);
   });
 
