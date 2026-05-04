@@ -27,6 +27,7 @@ import "./styles.css";
 const socket = io("http://127.0.0.1:3030", {
   transports: ["websocket", "polling"],
 });
+const ownerToken = import.meta.env.VITE_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 
 const avatarColors = ["#f7b267", "#7bdff2", "#b2f7ef", "#f79d84", "#cdb4db", "#90dbf4", "#f1c0e8", "#98f5e1"];
 
@@ -120,17 +121,23 @@ function useQueueSocket(initialDashboardId = "milos") {
 
   useEffect(() => {
     const handleUpdate = (payload) => setState(payload);
-    const handleConnect = () => setConnected(true);
+    const handleConnect = () => {
+      setConnected(true);
+      socket.emit("owner:auth", ownerToken);
+    };
+    const handleOwnerAuth = () => socket.emit("dashboard:select", initialDashboardId);
     const handleDisconnect = () => setConnected(false);
 
     socket.on("queue:update", handleUpdate);
     socket.on("connect", handleConnect);
+    socket.on("owner:auth:ok", handleOwnerAuth);
     socket.on("disconnect", handleDisconnect);
-    socket.emit("dashboard:select", initialDashboardId);
+    socket.emit("owner:auth", ownerToken);
 
     return () => {
       socket.off("queue:update", handleUpdate);
       socket.off("connect", handleConnect);
+      socket.off("owner:auth:ok", handleOwnerAuth);
       socket.off("disconnect", handleDisconnect);
     };
   }, [initialDashboardId]);

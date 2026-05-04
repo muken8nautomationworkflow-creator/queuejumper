@@ -20,6 +20,7 @@ function getSocketUrl() {
 }
 
 const socketUrl = getSocketUrl();
+const ownerToken = process.env.EXPO_PUBLIC_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 
 function getCustomerBaseUrl() {
   if (process.env.EXPO_PUBLIC_CUSTOMER_BASE_URL) {
@@ -69,8 +70,6 @@ function useQueueSocket() {
     socketRef.on("queue:update", handleUpdate);
     socketRef.on("connect", handleConnect);
     socketRef.on("disconnect", handleDisconnect);
-    socketRef.emit("dashboard:select", state.activeDashboard.id);
-
     return () => {
       socketRef.off("queue:update", handleUpdate);
       socketRef.off("connect", handleConnect);
@@ -383,6 +382,7 @@ function AuthScreen({ onAuthenticate }) {
   const [shopName, setShopName] = useState("Milo's Barbershop");
   const [email, setEmail] = useState("owner@queuejumper.test");
   const [password, setPassword] = useState("demo1234");
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const isSignUp = mode === "signup";
 
   function submitAuth() {
@@ -395,7 +395,43 @@ function AuthScreen({ onAuthenticate }) {
       ownerName: ownerName.trim() || "Owner",
       shopName: shopName.trim() || "Queue Jumper shop",
       email: email.trim(),
+      ownerToken,
     });
+  }
+
+  if (showPrivacy) {
+    return (
+      <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.authScreen} contentContainerStyle={styles.authContent}>
+        <View style={styles.authHero}>
+          <Text selectable style={styles.brand}>
+            Queue Jumper
+          </Text>
+          <Text selectable style={styles.authTitle}>
+            Privacy Policy
+          </Text>
+          <Text selectable style={styles.authCopy}>
+            Queue Jumper uses owner account details, shop details, ticket numbers, queue rank, estimated wait times, and realtime queue status to run the waiting list.
+          </Text>
+        </View>
+        <View style={styles.authCard}>
+          <Text selectable style={styles.sectionTitle}>
+            Customer privacy
+          </Text>
+          <Text selectable style={styles.previewCopy}>
+            Public customer pages show ticket numbers, live rank, and estimated wait. Customer names are kept inside the owner dashboard and are not shown publicly.
+          </Text>
+          <Text selectable style={styles.sectionTitle}>
+            Data use
+          </Text>
+          <Text selectable style={styles.previewCopy}>
+            Data is used for queue management and live notifications only. This prototype does not sell personal data.
+          </Text>
+          <Pressable onPress={() => setShowPrivacy(false)} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>Back to sign in</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
   }
 
   return (
@@ -456,10 +492,13 @@ function AuthScreen({ onAuthenticate }) {
           <Pressable onPress={submitAuth} style={styles.authButton}>
             <Text style={styles.primaryButtonText}>{isSignUp ? "Create account" : "Sign in"}</Text>
           </Pressable>
-          <Text selectable style={styles.authNote}>
-            Demo auth only. Real accounts can be connected later with Supabase, Firebase, or your backend.
-          </Text>
-        </View>
+        <Text selectable style={styles.authNote}>
+          Demo auth uses an owner token. Use a private token in production and connect real accounts before release.
+        </Text>
+        <Pressable onPress={() => setShowPrivacy(true)} style={styles.textButton}>
+          <Text style={styles.textButtonText}>Privacy Policy</Text>
+        </Pressable>
+      </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -476,6 +515,18 @@ export default function QueueJumperApp() {
   function selectDashboard(dashboardId) {
     socket.emit("dashboard:select", dashboardId);
   }
+
+  useEffect(() => {
+    if (!session) return;
+
+    const handleOwnerError = (message) => Alert.alert("Owner access", message);
+    socket.on("owner:error", handleOwnerError);
+    socket.emit("owner:auth", session.ownerToken);
+
+    return () => {
+      socket.off("owner:error", handleOwnerError);
+    };
+  }, [session, socket]);
 
   function shareQrLink() {
     Share.share({
@@ -689,6 +740,15 @@ const styles = {
     fontSize: 12,
     lineHeight: 18,
     textAlign: "center",
+  },
+  textButton: {
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textButtonText: {
+    color: "#149542",
+    fontWeight: "900",
   },
   customerAppShell: {
     gap: 14,

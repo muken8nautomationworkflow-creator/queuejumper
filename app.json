@@ -8,6 +8,8 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "android": {
+      "package": "com.queuejumper.app",
+      "versionCode": 1,
       "softwareKeyboardLayoutMode": "resize"
     },
     "plugins": ["expo-router"],

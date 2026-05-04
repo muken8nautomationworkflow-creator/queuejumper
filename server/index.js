@@ -4,9 +4,10 @@ import { Server } from "socket.io";
 
 const app = express();
 const httpServer = createServer(app);
+const ownerToken = process.env.QUEUE_JUMPER_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : "*",
   },
 });
 
@@ -83,6 +84,16 @@ for (const dashboard of dashboards) {
 
 const waitForIndex = (index) => (index + 1) * 5 + 3;
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
 function getDashboard(shopId = "milos") {
   return seedState.get(shopId) ?? seedState.get("milos");
 }
@@ -128,18 +139,85 @@ function snapshot(shopId = "milos") {
   };
 }
 
-function customerPageHtml(dashboard) {
+function publicSnapshot(shopId = "milos") {
+  const dashboard = getDashboard(shopId);
+  const state = getState(dashboard.id);
+  return {
+    activeDashboard: publicDashboards().find((item) => item.id === dashboard.id),
+    serving: {
+      ticket: state.serving.ticket,
+    },
+    queue: state.queue.map((customer, index) => ({
+      ticket: customer.ticket,
+      rank: index + 1,
+      estimatedWait: waitForIndex(index),
+      status: index === 0 ? "next" : "waiting",
+    })),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function emitDashboardUpdate(shopId) {
+  io.to(`${shopId}:owners`).emit("queue:update", snapshot(shopId));
+  io.to(`${shopId}:public`).emit("queue:public", publicSnapshot(shopId));
+}
+
+function privacyPolicyHtml() {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${dashboard.name} Queue</title>
+  <title>Queue Jumper Privacy Policy</title>
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f8f4; color: #151922; }
+    main { width: min(100%, 760px); margin: 0 auto; padding: 28px 18px; display: grid; gap: 16px; }
+    section { border: 1px solid #e0e7ef; border-radius: 8px; background: #fff; padding: 18px; }
+    h1 { margin: 0; font-size: 34px; }
+    h2 { margin: 0 0 8px; }
+    p, li { line-height: 1.55; color: #4b5563; }
+    a { color: #149542; font-weight: 800; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Privacy Policy</h1>
+    <section>
+      <h2>What Queue Jumper Collects</h2>
+      <p>Queue Jumper uses shop profile details, owner sign-in details, queue tickets, estimated wait times, and realtime queue status to operate the live waiting list experience.</p>
+    </section>
+    <section>
+      <h2>Customer Queue Privacy</h2>
+      <p>Public customer pages show ticket numbers, rank, and estimated wait. Customer names are not shown on public queue pages.</p>
+    </section>
+    <section>
+      <h2>How Data Is Used</h2>
+      <p>Data is used only to manage queues, show live rank updates, and let owners operate their shop dashboard. This prototype does not sell personal data.</p>
+    </section>
+    <section>
+      <h2>Contact</h2>
+      <p>For production, replace this with your support email before submitting to Google Play.</p>
+    </section>
+    <a href="/join/milos-barbershop">Back to customer queue</a>
+  </main>
+</body>
+</html>`;
+}
+
+function customerPageHtml(dashboard) {
+  const safeName = escapeHtml(dashboard.name);
+  const safeAccent = escapeHtml(dashboard.accent);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${safeName} Queue</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f8f4; color: #151922; }
     main { width: min(100%, 520px); margin: 0 auto; padding: 18px; display: grid; gap: 14px; }
-    .hero { border-radius: 8px; background: ${dashboard.accent}; color: #fff; padding: 22px 18px; display: grid; gap: 18px; }
+    .hero { border-radius: 8px; background: ${safeAccent}; color: #fff; padding: 22px 18px; display: grid; gap: 18px; }
     .top { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
     .brand { font-weight: 900; font-size: 18px; }
     .shop { opacity: .86; font-weight: 700; margin-top: 4px; }
@@ -172,7 +250,7 @@ function customerPageHtml(dashboard) {
       <div class="top">
         <div>
           <div class="brand">Queue Jumper</div>
-          <div class="shop">${dashboard.name}</div>
+          <div class="shop">${safeName}</div>
         </div>
         <div class="live" id="live">Connecting</div>
       </div>
@@ -186,7 +264,7 @@ function customerPageHtml(dashboard) {
     </section>
     <section class="card status">
       <h2>Status</h2>
-      <div class="row"><span class="mark" style="background:${dashboard.accent}"></span><div><strong>Joined the queue</strong><span>Checked in from the door QR</span></div></div>
+      <div class="row"><span class="mark" style="background:${safeAccent}"></span><div><strong>Joined the queue</strong><span>Checked in from the door QR</span></div></div>
       <div class="row"><span class="mark" id="nextMark"></span><div><strong id="ahead">Waiting</strong><span>We'll call your ticket when it is time.</span></div></div>
       <div class="row"><span class="mark"></span><div><strong>Service starts</strong><span>Show this ticket if the shop asks.</span></div></div>
     </section>
@@ -214,14 +292,14 @@ function customerPageHtml(dashboard) {
 
     socket.on("connect", () => {
       live.textContent = "Live";
-      socket.emit("dashboard:select", shopId);
+      socket.emit("public:select", shopId);
     });
 
     socket.on("disconnect", () => {
       live.textContent = "Offline";
     });
 
-    socket.on("queue:update", (state) => {
+    socket.on("queue:public", (state) => {
       const customer = state.queue[2] || state.queue[0];
       const currentRank = customer?.rank || 0;
       ticket.textContent = customer?.ticket || "Done";
@@ -241,6 +319,10 @@ function customerPageHtml(dashboard) {
 </html>`;
 }
 
+app.get("/privacy", (req, res) => {
+  res.type("html").send(privacyPolicyHtml());
+});
+
 app.get("/join/:slug", (req, res) => {
   const dashboard = getDashboardBySlug(req.params.slug);
   res.type("html").send(customerPageHtml(dashboard));
@@ -248,18 +330,47 @@ app.get("/join/:slug", (req, res) => {
 
 io.on("connection", (socket) => {
   let activeShopId = "milos";
-  socket.join(activeShopId);
-  socket.emit("queue:update", snapshot(activeShopId));
+  socket.data.isOwner = false;
 
-  socket.on("dashboard:select", (shopId) => {
-    const dashboard = getDashboard(shopId);
-    socket.leave(activeShopId);
-    activeShopId = dashboard.id;
-    socket.join(activeShopId);
+  socket.on("owner:auth", (token) => {
+    if (token !== ownerToken) {
+      socket.emit("owner:error", "Owner authentication failed.");
+      return;
+    }
+
+    socket.data.isOwner = true;
+    socket.join(`${activeShopId}:owners`);
+    socket.emit("owner:auth:ok");
     socket.emit("queue:update", snapshot(activeShopId));
   });
 
+  socket.on("dashboard:select", (shopId) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const dashboard = getDashboard(shopId);
+    socket.leave(`${activeShopId}:owners`);
+    activeShopId = dashboard.id;
+    socket.join(`${activeShopId}:owners`);
+    socket.emit("queue:update", snapshot(activeShopId));
+  });
+
+  socket.on("public:select", (shopId) => {
+    const dashboard = getDashboard(shopId);
+    socket.leave(`${activeShopId}:public`);
+    activeShopId = dashboard.id;
+    socket.join(`${activeShopId}:public`);
+    socket.emit("queue:public", publicSnapshot(activeShopId));
+  });
+
   socket.on("owner:next", (shopId) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     if (state.queue.length === 0) return;
@@ -274,13 +385,18 @@ io.on("connection", (socket) => {
       ...customer,
       status: index === 0 ? "next" : "waiting",
     }));
-    io.to(dashboard.id).emit("queue:update", snapshot(dashboard.id));
+    emitDashboardUpdate(dashboard.id);
   });
 
   socket.on("owner:reset", (shopId) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
     const dashboard = getDashboard(shopId ?? activeShopId);
     states.set(dashboard.id, createState(dashboard));
-    io.to(dashboard.id).emit("queue:update", snapshot(dashboard.id));
+    emitDashboardUpdate(dashboard.id);
   });
 });
 
