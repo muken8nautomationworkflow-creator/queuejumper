@@ -52,7 +52,16 @@ https://queuejumper-production.up.railway.app/join/milos-barbershop
 
 `/health/db` should return `storage: "postgres"` and `database: "connected"` after Railway Postgres is connected.
 
-`NOTIFICATION_PROVIDER=mock` logs customer notifications without sending real messages. Replace it with a real provider integration such as Twilio, WhatsApp Business, or FCM before sending production messages.
+`NOTIFICATION_PROVIDER=mock` logs customer notifications without sending real messages.
+
+To use FCM push notifications, set:
+
+```env
+NOTIFICATION_PROVIDER=fcm
+FCM_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"your-firebase-project","private_key":"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n","client_email":"firebase-adminsdk-...@your-project.iam.gserviceaccount.com"}
+```
+
+FCM needs a device or browser push token from the customer device. A phone number alone cannot receive FCM; use Twilio or WhatsApp Business for phone-number messages.
 
 ## EAS Android Build
 

@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import admin from "firebase-admin";
 import pg from "pg";
 import { Server } from "socket.io";
 
@@ -17,6 +18,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS
 const joinRateWindowMs = Number(process.env.JOIN_RATE_WINDOW_MS || 60_000);
 const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
 const notificationProvider = process.env.NOTIFICATION_PROVIDER || "mock";
+const fcmServiceAccountJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
 const joinAttempts = new Map();
 const dbPool = databaseUrl ? new Pool({
   connectionString: databaseUrl,
@@ -29,6 +31,25 @@ if (isProduction && ownerToken === "queue-jumper-demo-owner-token") {
 
 if (isProduction && requireDatabase && !databaseUrl) {
   throw new Error("DATABASE_URL must be set when REQUIRE_DATABASE=true.");
+}
+
+if (isProduction && notificationProvider === "fcm" && !fcmServiceAccountJson && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  throw new Error("FCM_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS must be set when NOTIFICATION_PROVIDER=fcm.");
+}
+
+function getFirebaseApp() {
+  if (admin.apps.length > 0) return admin.app();
+
+  if (fcmServiceAccountJson) {
+    const serviceAccount = JSON.parse(fcmServiceAccountJson);
+    return admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  }
+
+  return admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+  });
 }
 
 app.use(express.json({ limit: "32kb" }));
@@ -268,6 +289,40 @@ function normalizePhone(value = "") {
 }
 
 async function sendCustomerMessage({ dashboard, customer, message, channel = "sms" }) {
+  if (notificationProvider === "fcm") {
+    const pushToken = customer?.pushToken || customer?.fcmToken;
+    if (!pushToken) {
+      return {
+        ok: false,
+        provider: "fcm",
+        error: "Customer FCM token is missing. FCM needs an app/browser push token, not only a phone number.",
+      };
+    }
+
+    const app = getFirebaseApp();
+    const response = await admin.messaging(app).send({
+      token: pushToken,
+      notification: {
+        title: `${dashboard.name}: ${customer.ticket} is coming up`,
+        body: message,
+      },
+      data: {
+        shopId: dashboard.id,
+        ticket: customer.ticket,
+        service: customer.service || "",
+        channel,
+      },
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "queue-alerts",
+        },
+      },
+    });
+
+    return { ok: true, provider: "fcm", channel, id: response };
+  }
+
   if (!customer?.phone) {
     return { ok: false, provider: notificationProvider, error: "Customer phone number is missing." };
   }
@@ -297,7 +352,8 @@ function normalizeCustomerInput(body = {}) {
   const name = String(body.name || "").trim().slice(0, 80) || "Guest Customer";
   const service = String(body.service || "").trim().slice(0, 80) || "Walk-in";
   const phone = normalizePhone(body.phone);
-  return { name, service, phone };
+  const pushToken = String(body.pushToken || body.fcmToken || "").trim().slice(0, 512);
+  return { name, service, phone, pushToken };
 }
 
 function isRateLimited(req) {
@@ -696,12 +752,13 @@ app.post("/api/join/:slug", (req, res) => {
     return;
   }
 
-  const { name, service, phone } = normalizeCustomerInput(req.body);
+  const { name, service, phone, pushToken } = normalizeCustomerInput(req.body);
   const customer = {
     id: Date.now(),
     ticket: nextTicketFor(dashboard, state),
     name,
     phone,
+    pushToken,
     service,
     joinedAt: nowLabel(),
     status: state.queue.length === 0 ? "next" : "waiting",
@@ -820,16 +877,17 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const { name, service, phone } = payload;
+    const { name, service, phone, pushToken } = payload;
     const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
-    const input = normalizeCustomerInput({ name, phone, service: service || dashboard.serviceLabel });
+    const input = normalizeCustomerInput({ name, phone, pushToken, service: service || dashboard.serviceLabel });
     const customer = {
       id: Date.now(),
       ticket: nextTicketFor(dashboard, state),
       name: input.name,
       phone: input.phone,
+      pushToken: input.pushToken,
       service: input.service,
       joinedAt: nowLabel(),
       status: state.queue.length === 0 ? "next" : "waiting",
