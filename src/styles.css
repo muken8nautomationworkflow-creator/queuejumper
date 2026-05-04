@@ -1181,6 +1181,36 @@ td:nth-child(2) {
   text-align: center;
 }
 
+.auth-card {
+  text-align: left;
+}
+
+.auth-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  color: #4f5d73;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-field input {
+  width: 100%;
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  color: #18202b;
+  font: inherit;
+  padding: 0 13px;
+}
+
+.auth-error {
+  color: #b93a2a;
+  margin: 14px 0 0;
+  line-height: 1.45;
+}
+
 .signed-out-card .mini-brand {
   margin-bottom: 18px;
 }

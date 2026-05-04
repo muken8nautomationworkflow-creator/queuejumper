@@ -41,6 +41,7 @@ const socket = io(getSocketUrl(), {
   transports: ["websocket", "polling"],
 });
 const ownerToken = import.meta.env.VITE_OWNER_TOKEN || "queue-jumper-demo-owner-token";
+const OWNER_TOKEN_STORAGE_KEY = "queue-jumper-owner-token";
 
 const avatarColors = ["#f7b267", "#7bdff2", "#b2f7ef", "#f79d84", "#cdb4db", "#90dbf4", "#f1c0e8", "#98f5e1"];
 
@@ -127,7 +128,7 @@ function shopIdFromPath() {
   return "milos";
 }
 
-function useQueueSocket(initialDashboardId = "milos") {
+function useQueueSocket(initialDashboardId = "milos", authToken = ownerToken) {
   const [state, setState] = useState({
     dashboards: fallbackDashboards,
     activeDashboard: fallbackDashboards[0],
@@ -139,31 +140,45 @@ function useQueueSocket(initialDashboardId = "milos") {
     updatedAt: new Date().toISOString(),
   });
   const [connected, setConnected] = useState(socket.connected);
+  const [authError, setAuthError] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
     const handleUpdate = (payload) => setState(payload);
     const handleConnect = () => {
       setConnected(true);
-      socket.emit("owner:auth", ownerToken);
+      setAuthenticated(false);
+      socket.emit("owner:auth", authToken);
     };
     const handleOwnerAuth = () => socket.emit("dashboard:select", initialDashboardId);
     const handleDisconnect = () => setConnected(false);
+    const handleOwnerAuthOk = () => {
+      setAuthError("");
+      setAuthenticated(true);
+      handleOwnerAuth();
+    };
+    const handleOwnerError = (message) => {
+      setAuthenticated(false);
+      setAuthError(message);
+    };
 
     socket.on("queue:update", handleUpdate);
     socket.on("connect", handleConnect);
-    socket.on("owner:auth:ok", handleOwnerAuth);
+    socket.on("owner:auth:ok", handleOwnerAuthOk);
+    socket.on("owner:error", handleOwnerError);
     socket.on("disconnect", handleDisconnect);
-    socket.emit("owner:auth", ownerToken);
+    socket.emit("owner:auth", authToken);
 
     return () => {
       socket.off("queue:update", handleUpdate);
       socket.off("connect", handleConnect);
-      socket.off("owner:auth:ok", handleOwnerAuth);
+      socket.off("owner:auth:ok", handleOwnerAuthOk);
+      socket.off("owner:error", handleOwnerError);
       socket.off("disconnect", handleDisconnect);
     };
-  }, [initialDashboardId]);
+  }, [initialDashboardId, authToken]);
 
-  return { ...state, connected };
+  return { ...state, connected, authenticated, authError };
 }
 
 function useActiveSection() {
@@ -645,6 +660,33 @@ function SignedOutView({ onReturn }) {
   );
 }
 
+function OwnerSignIn({ initialValue, error, onSubmit }) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  return (
+    <main className="signed-out-page">
+      <section className="signed-out-card auth-card">
+        <div className="mini-brand">Queue Jumper</div>
+        <h1>Owner sign in</h1>
+        <p>Enter your owner token to load the live Railway dashboard data.</p>
+        <label className="auth-field">
+          Owner token
+          <input value={value} onChange={(event) => setValue(event.target.value)} placeholder="qj_owner_..." type="password" />
+        </label>
+        {error ? <p className="auth-error">{error}</p> : null}
+        <button className="primary-button" type="button" onClick={() => onSubmit(value)}>
+          Open dashboard
+          <ArrowRight size={20} />
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function PhonePreview({ activeDashboard, queue, connected }) {
   const customer = queue[2] ?? queue[0];
   const rank = customer?.rank ?? 0;
@@ -739,7 +781,8 @@ function CustomerJoinView({ activeDashboard, queue, connected }) {
 function App() {
   const isCustomerView = window.location.pathname.startsWith("/join");
   const initialDashboardId = isCustomerView ? shopIdFromPath() : "milos";
-  const { dashboards, activeDashboard, serving, queue, completed, appointments, analytics, connected } = useQueueSocket(initialDashboardId);
+  const [ownerAuthToken, setOwnerAuthToken] = useState(() => window.localStorage.getItem(OWNER_TOKEN_STORAGE_KEY) || ownerToken);
+  const { dashboards, activeDashboard, serving, queue, completed, appointments, analytics, connected, authenticated, authError } = useQueueSocket(initialDashboardId, ownerAuthToken);
   const activeSection = useActiveSection();
   const [signedOut, setSignedOut] = useState(false);
   const previewCustomer = queue[2] ?? queue[0];
@@ -748,12 +791,22 @@ function App() {
     socket.emit("dashboard:select", dashboardId);
   }
 
+  function handleOwnerSignIn(token) {
+    const cleanToken = token.trim();
+    setOwnerAuthToken(cleanToken);
+    window.localStorage.setItem(OWNER_TOKEN_STORAGE_KEY, cleanToken);
+  }
+
   if (isCustomerView) {
     return <CustomerJoinView activeDashboard={activeDashboard} queue={queue} connected={connected} />;
   }
 
   if (signedOut) {
     return <SignedOutView onReturn={() => setSignedOut(false)} />;
+  }
+
+  if (!authenticated) {
+    return <OwnerSignIn initialValue={ownerAuthToken} error={authError} onSubmit={handleOwnerSignIn} />;
   }
 
   return (
@@ -765,7 +818,11 @@ function App() {
           connected={connected}
           dashboards={dashboards}
           onDashboardChange={handleDashboardChange}
-          onSignOut={() => setSignedOut(true)}
+          onSignOut={() => {
+            setSignedOut(true);
+            setOwnerAuthToken("");
+            window.localStorage.removeItem(OWNER_TOKEN_STORAGE_KEY);
+          }}
         />
         {activeSection === "settings" ? (
           <SettingsPanel activeDashboard={activeDashboard} />
