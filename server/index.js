@@ -16,6 +16,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean) : [];
 const joinRateWindowMs = Number(process.env.JOIN_RATE_WINDOW_MS || 60_000);
 const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
+const notificationProvider = process.env.NOTIFICATION_PROVIDER || "mock";
 const joinAttempts = new Map();
 const dbPool = databaseUrl ? new Pool({
   connectionString: databaseUrl,
@@ -55,17 +56,18 @@ const dashboards = [
     name: "Milo's Barbershop",
     location: "18 Market Lane",
     serviceLabel: "Haircut",
+    serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
     accent: "#22b157",
     serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
     queue: [
-      { id: 16, ticket: "A16", name: "Taylor Nguyen", service: "Beard trim", joinedAt: "9:20 AM" },
-      { id: 17, ticket: "A17", name: "Jordan Lee", service: "Haircut", joinedAt: "9:24 AM" },
-      { id: 18, ticket: "A18", name: "Casey Brown", service: "Haircut", joinedAt: "9:28 AM" },
-      { id: 19, ticket: "A19", name: "Chris Patel", service: "Beard trim", joinedAt: "9:31 AM" },
-      { id: 20, ticket: "A20", name: "Morgan Davis", service: "Haircut", joinedAt: "9:35 AM" },
-      { id: 21, ticket: "A21", name: "Riley Smith", service: "Haircut", joinedAt: "9:38 AM" },
-      { id: 22, ticket: "A22", name: "Jamie Wilson", service: "Beard trim", joinedAt: "9:42 AM" },
-      { id: 23, ticket: "A23", name: "Drew Martin", service: "Haircut", joinedAt: "9:45 AM" },
+      { id: 16, ticket: "A16", name: "Taylor Nguyen", phone: "+15550100016", service: "Beard trim", joinedAt: "9:20 AM" },
+      { id: 17, ticket: "A17", name: "Jordan Lee", phone: "+15550100017", service: "Haircut", joinedAt: "9:24 AM" },
+      { id: 18, ticket: "A18", name: "Casey Brown", phone: "+15550100018", service: "Haircut", joinedAt: "9:28 AM" },
+      { id: 19, ticket: "A19", name: "Chris Patel", phone: "+15550100019", service: "Beard trim", joinedAt: "9:31 AM" },
+      { id: 20, ticket: "A20", name: "Morgan Davis", phone: "+15550100020", service: "Haircut", joinedAt: "9:35 AM" },
+      { id: 21, ticket: "A21", name: "Riley Smith", phone: "+15550100021", service: "Haircut", joinedAt: "9:38 AM" },
+      { id: 22, ticket: "A22", name: "Jamie Wilson", phone: "+15550100022", service: "Beard trim", joinedAt: "9:42 AM" },
+      { id: 23, ticket: "A23", name: "Drew Martin", phone: "+15550100023", service: "Haircut", joinedAt: "9:45 AM" },
     ],
   },
   {
@@ -74,6 +76,7 @@ const dashboards = [
     name: "Red Door Coffee",
     location: "22 Market Lane",
     serviceLabel: "Pickup",
+    serviceOptions: ["Pickup", "Latte order", "Cold brew", "Pastry box"],
     accent: "#b26a3c",
     serving: { ticket: "C08", name: "Priya Shah", service: "Latte order" },
     queue: [
@@ -89,6 +92,7 @@ const dashboards = [
     name: "Bloom Nails",
     location: "7 Grove Street",
     serviceLabel: "Manicure",
+    serviceOptions: ["Manicure", "Gel manicure", "Polish change", "Nail art", "Pedicure"],
     accent: "#ff5848",
     serving: { ticket: "N21", name: "Harper Ellis", service: "Gel manicure" },
     queue: [
@@ -229,6 +233,57 @@ function makeNotification(state, message) {
   ].slice(0, 8);
 }
 
+function makeAnalytics(dashboard, state) {
+  const serviceNames = [...new Set([
+    dashboard.serviceLabel,
+    ...(dashboard.serviceOptions || []),
+    state.serving?.service,
+    ...state.queue.map((customer) => customer.service),
+    ...state.completed.map((customer) => customer.service),
+  ].filter(Boolean))];
+
+  const serviceQueues = serviceNames.map((service) => {
+    const waiting = state.queue.filter((customer) => customer.service === service);
+    const completed = state.completed.filter((customer) => customer.service === service);
+    return {
+      service,
+      waiting: waiting.length,
+      completed: completed.length,
+      estimatedWait: waiting.reduce((total, _customer, index) => total + waitForIndex(index), 0),
+    };
+  });
+
+  return {
+    waiting: state.queue.length,
+    servedToday: state.completed.length,
+    noShows: state.completed.filter((customer) => customer.reason === "no-show").length,
+    notified: state.completed.filter((customer) => customer.notifiedAt).length + state.queue.filter((customer) => customer.notifiedAt).length,
+    averageWait: state.queue.length ? Math.round(state.queue.reduce((total, _customer, index) => total + waitForIndex(index), 0) / state.queue.length) : 0,
+    serviceQueues,
+  };
+}
+
+function normalizePhone(value = "") {
+  return String(value).trim().replace(/[^\d+]/g, "").slice(0, 24);
+}
+
+async function sendCustomerMessage({ dashboard, customer, message, channel = "sms" }) {
+  if (!customer?.phone) {
+    return { ok: false, provider: notificationProvider, error: "Customer phone number is missing." };
+  }
+
+  if (notificationProvider === "mock") {
+    console.log(`[mock:${channel}] ${customer.phone}: ${message}`);
+    return { ok: true, provider: "mock", channel };
+  }
+
+  return {
+    ok: false,
+    provider: notificationProvider,
+    error: `Notification provider ${notificationProvider} is not connected yet for ${dashboard.name}.`,
+  };
+}
+
 function nextTicketFor(dashboard, state) {
   const prefix = dashboard.serving.ticket.match(/^[A-Z]+/)?.[0] || "Q";
   const numbers = [state.serving, ...state.queue, ...state.completed]
@@ -241,7 +296,8 @@ function nextTicketFor(dashboard, state) {
 function normalizeCustomerInput(body = {}) {
   const name = String(body.name || "").trim().slice(0, 80) || "Guest Customer";
   const service = String(body.service || "").trim().slice(0, 80) || "Walk-in";
-  return { name, service };
+  const phone = normalizePhone(body.phone);
+  return { name, service, phone };
 }
 
 function isRateLimited(req) {
@@ -278,12 +334,13 @@ function getState(shopId = "milos") {
 }
 
 function publicDashboards() {
-  return dashboards.map(({ id, slug, name, location, serviceLabel, accent }) => ({
+  return dashboards.map(({ id, slug, name, location, serviceLabel, serviceOptions, accent }) => ({
     id,
     slug,
     name,
     location,
     serviceLabel,
+    serviceOptions,
     accent,
   }));
 }
@@ -307,6 +364,7 @@ function snapshot(shopId = "milos") {
     })),
     completed: state.completed,
     notifications: state.notifications || [],
+    analytics: makeAnalytics(dashboard, state),
     paused: Boolean(state.paused),
     updatedAt: new Date().toISOString(),
   };
@@ -386,6 +444,9 @@ function privacyPolicyHtml() {
 function customerPageHtml(dashboard) {
   const safeName = escapeHtml(dashboard.name);
   const safeAccent = escapeHtml(dashboard.accent);
+  const serviceOptions = [...new Set([dashboard.serviceLabel, ...(dashboard.serviceOptions || []), "Walk-in", "Pickup", "Consultation"])]
+    .map((service) => `<option>${escapeHtml(service)}</option>`)
+    .join("");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -448,12 +509,12 @@ function customerPageHtml(dashboard) {
         <label>Nickname
           <input name="name" maxlength="80" placeholder="e.g. Sam" autocomplete="name" />
         </label>
+        <label>Phone for SMS or WhatsApp
+          <input name="phone" maxlength="24" placeholder="+1 555 010 1234" autocomplete="tel" inputmode="tel" />
+        </label>
         <label>Service
           <select name="service">
-            <option>${escapeHtml(dashboard.serviceLabel)}</option>
-            <option>Walk-in</option>
-            <option>Pickup</option>
-            <option>Consultation</option>
+            ${serviceOptions}
           </select>
         </label>
         <button id="joinButton" type="submit">Join queue</button>
@@ -534,6 +595,7 @@ function customerPageHtml(dashboard) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.get("name"),
+          phone: form.get("phone"),
           service: form.get("service"),
         }),
       });
@@ -634,18 +696,19 @@ app.post("/api/join/:slug", (req, res) => {
     return;
   }
 
-  const { name, service } = normalizeCustomerInput(req.body);
+  const { name, service, phone } = normalizeCustomerInput(req.body);
   const customer = {
     id: Date.now(),
     ticket: nextTicketFor(dashboard, state),
     name,
+    phone,
     service,
     joinedAt: nowLabel(),
     status: state.queue.length === 0 ? "next" : "waiting",
   };
 
   state.queue.push(customer);
-  makeNotification(state, `${customer.ticket} joined for ${service}.`);
+  makeNotification(state, `${customer.ticket} joined for ${service}${phone ? " with phone on file" : ""}.`);
   emitDashboardUpdate(dashboard.id);
   res.status(201).json({
     ok: true,
@@ -757,15 +820,16 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const { name, service } = payload;
+    const { name, service, phone } = payload;
     const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
-    const input = normalizeCustomerInput({ name, service: service || dashboard.serviceLabel });
+    const input = normalizeCustomerInput({ name, phone, service: service || dashboard.serviceLabel });
     const customer = {
       id: Date.now(),
       ticket: nextTicketFor(dashboard, state),
       name: input.name,
+      phone: input.phone,
       service: input.service,
       joinedAt: nowLabel(),
       status: state.queue.length === 0 ? "next" : "waiting",
@@ -773,6 +837,35 @@ io.on("connection", (socket) => {
 
     state.queue.push(customer);
     makeNotification(state, `${customer.ticket} was added by owner.`);
+    emitDashboardUpdate(dashboard.id);
+  });
+
+  socket.on("owner:notify", async (payload = {}) => {
+    if (!isOwnerAuthorized(socket, payload)) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const { ticket, channel = "sms" } = payload;
+    const shopId = payloadShopId(payload, activeShopId);
+    const dashboard = getDashboard(shopId ?? activeShopId);
+    const state = getState(dashboard.id);
+    const customer = state.queue.find((item) => item.ticket === ticket) || (state.serving.ticket === ticket ? state.serving : null);
+    if (!customer) return;
+
+    const message = `${dashboard.name}: ${customer.ticket} is coming up. Please return for ${customer.service}.`;
+    const result = await sendCustomerMessage({ dashboard, customer, message, channel });
+    if (!result.ok) {
+      socket.emit("owner:error", result.error);
+      return;
+    }
+
+    const notifiedAt = new Date().toISOString();
+    state.queue = state.queue.map((item) => item.ticket === ticket ? { ...item, notifiedAt, notificationChannel: channel } : item);
+    if (state.serving.ticket === ticket) {
+      state.serving = { ...state.serving, notifiedAt, notificationChannel: channel };
+    }
+    makeNotification(state, `${ticket} notified by ${channel.toUpperCase()}.`);
     emitDashboardUpdate(dashboard.id);
   });
 

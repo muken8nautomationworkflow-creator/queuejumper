@@ -14,6 +14,8 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - Public customer pages hide customer names.
 - Join endpoint has lightweight rate limiting.
 - Postgres persistence through `DATABASE_URL`, with JSON file fallback for local testing.
+- Customer phone capture for SMS/WhatsApp return alerts.
+- Owner Notify button, analytics screen, printable QR poster, and per-service queue filters.
 
 ## Railway Environment
 
@@ -27,6 +29,7 @@ REQUIRE_DATABASE=true
 ALLOWED_ORIGINS=https://queuejumper-production.up.railway.app
 JOIN_RATE_WINDOW_MS=60000
 JOIN_RATE_LIMIT=8
+NOTIFICATION_PROVIDER=mock
 ```
 
 To add the Railway database:
@@ -48,6 +51,8 @@ https://queuejumper-production.up.railway.app/join/milos-barbershop
 ```
 
 `/health/db` should return `storage: "postgres"` and `database: "connected"` after Railway Postgres is connected.
+
+`NOTIFICATION_PROVIDER=mock` logs customer notifications without sending real messages. Replace it with a real provider integration such as Twilio, WhatsApp Business, or FCM before sending production messages.
 
 ## EAS Android Build
 

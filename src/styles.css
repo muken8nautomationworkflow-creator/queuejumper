@@ -421,6 +421,31 @@ button {
   gap: 10px;
 }
 
+.service-filter-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.service-filter-row button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font-weight: 750;
+  white-space: nowrap;
+  padding: 0 12px;
+}
+
+.service-filter-row button.selected {
+  color: var(--green-strong);
+  border-color: #a8e5b9;
+  background: #eefaf2;
+}
+
 .panel-actions button,
 .secondary-button,
 .reset-button {
@@ -597,6 +622,23 @@ td:nth-child(2) {
 .qr-link {
   text-align: center;
   font-size: 14px;
+}
+
+.poster-copy {
+  display: grid;
+  gap: 5px;
+  text-align: center;
+  margin: -8px 0 18px;
+}
+
+.poster-copy strong {
+  font-size: 18px;
+}
+
+.poster-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .secondary-button {
@@ -901,6 +943,47 @@ td:nth-child(2) {
   gap: 18px;
 }
 
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.metric-panel {
+  display: grid;
+  gap: 10px;
+  min-height: 118px;
+}
+
+.metric-panel span {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.metric-panel strong {
+  color: var(--green-strong);
+  font-size: 31px;
+}
+
+.analytics-services {
+  overflow: hidden;
+}
+
+.service-summary-row {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(3, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 18px;
+  border-top: 1px solid var(--line);
+}
+
+.service-summary-row span {
+  color: #5f6b7e;
+}
+
 .settings-panel,
 .signed-out-card {
   border: 1px solid var(--line);
@@ -1150,7 +1233,8 @@ td:nth-child(2) {
   }
 
   .settings-heading,
-  .settings-grid {
+  .settings-grid,
+  .analytics-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1186,6 +1270,11 @@ td:nth-child(2) {
   .phone {
     width: min(100%, 360px);
     min-height: auto;
+  }
+
+  .service-summary-row {
+    grid-template-columns: 1fr;
+    padding: 14px 18px;
   }
 
   .reset-button {

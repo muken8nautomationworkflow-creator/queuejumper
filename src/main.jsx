@@ -38,6 +38,7 @@ const fallbackDashboards = [
     name: "Milo's Barbershop",
     location: "18 Market Lane",
     serviceLabel: "Haircut",
+    serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
     accent: "#22b157",
   },
 ];
@@ -115,6 +116,7 @@ function useQueueSocket(initialDashboardId = "milos") {
     serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
     queue: [],
     completed: [],
+    analytics: { waiting: 0, servedToday: 0, noShows: 0, notified: 0, averageWait: 0, serviceQueues: [] },
     updatedAt: new Date().toISOString(),
   });
   const [connected, setConnected] = useState(socket.connected);
@@ -170,6 +172,10 @@ function Sidebar({ activeSection }) {
         <a className={`nav-item ${activeSection === "qr" ? "active" : ""}`} href="#qr">
           <QrCode size={20} />
           <span>QR</span>
+        </a>
+        <a className={`nav-item ${activeSection === "analytics" ? "active" : ""}`} href="#analytics">
+          <SlidersHorizontal size={20} />
+          <span>Analytics</span>
         </a>
         <a className={`nav-item ${activeSection === "settings" ? "active" : ""}`} href="#settings">
           <Settings size={20} />
@@ -284,24 +290,38 @@ function NextCard({ activeDashboard, nextCustomer }) {
   );
 }
 
-function QueueTable({ queue }) {
+function QueueTable({ queue, activeDashboard }) {
+  const [serviceFilter, setServiceFilter] = useState("All");
+  const serviceOptions = useMemo(
+    () => ["All", ...new Set([activeDashboard.serviceLabel, ...(activeDashboard.serviceOptions || []), ...queue.map((customer) => customer.service)].filter(Boolean))],
+    [activeDashboard, queue],
+  );
+  const visibleQueue = serviceFilter === "All" ? queue : queue.filter((customer) => customer.service === serviceFilter);
+
   return (
     <section className="queue-panel" id="queue">
       <div className="panel-header">
         <div className="panel-title">
           <UsersRound size={18} />
           <h2>Waiting list</h2>
-          <span>{queue.length}</span>
+          <span>{visibleQueue.length}</span>
         </div>
         <div className="panel-actions">
-          <button type="button">
+          <button type="button" onClick={() => setServiceFilter("All")}>
             <Filter size={16} />
-            Filters
+            All
           </button>
           <button type="button" aria-label="Queue settings">
             <SlidersHorizontal size={17} />
           </button>
         </div>
+      </div>
+      <div className="service-filter-row">
+        {serviceOptions.map((service) => (
+          <button className={service === serviceFilter ? "selected" : ""} key={service} type="button" onClick={() => setServiceFilter(service)}>
+            {service}
+          </button>
+        ))}
       </div>
       <div className="table-wrap">
         <table>
@@ -311,13 +331,14 @@ function QueueTable({ queue }) {
               <th>Customer</th>
               <th>Ticket</th>
               <th>Service</th>
+              <th>Phone</th>
               <th>Est. wait</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {queue.map((customer, index) => (
+            {visibleQueue.map((customer, index) => (
               <tr key={customer.ticket}>
                 <td>{index + 1}</td>
                 <td>
@@ -328,13 +349,20 @@ function QueueTable({ queue }) {
                 </td>
                 <td className="ticket">{customer.ticket}</td>
                 <td>{customer.service}</td>
+                <td>{customer.phone || "No phone"}</td>
                 <td className="wait">~{customer.estimatedWait} min</td>
                 <td>
                   <span className={`status ${index === 0 ? "next" : ""}`}>{index === 0 ? "Next" : "Waiting"}</span>
                 </td>
                 <td>
-                  <button className="row-action" aria-label={`More actions for ${customer.name}`} type="button">
-                    <MoreHorizontal size={18} />
+                  <button
+                    className="row-action"
+                    aria-label={`Notify ${customer.name}`}
+                    type="button"
+                    disabled={!customer.phone}
+                    onClick={() => socket.emit("owner:notify", { token: ownerToken, shopId: activeDashboard.id, ticket: customer.ticket, channel: "sms" })}
+                  >
+                    <Bell size={18} />
                   </button>
                 </td>
               </tr>
@@ -346,6 +374,51 @@ function QueueTable({ queue }) {
         <span className="dot" />
         Auto-updates in real time
       </div>
+    </section>
+  );
+}
+
+function AnalyticsPanel({ analytics }) {
+  const cards = [
+    ["Waiting", analytics.waiting ?? 0],
+    ["Served today", analytics.servedToday ?? 0],
+    ["Avg wait", `${analytics.averageWait ?? 0} min`],
+    ["No-shows", analytics.noShows ?? 0],
+    ["Notified", analytics.notified ?? 0],
+  ];
+
+  return (
+    <section className="settings-page" id="analytics">
+      <div className="settings-heading">
+        <div>
+          <h1>Analytics</h1>
+          <p>Track daily volume, notification use, service demand, and wait pressure.</p>
+        </div>
+      </div>
+      <div className="analytics-grid">
+        {cards.map(([label, value]) => (
+          <section className="settings-panel metric-panel" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </section>
+        ))}
+      </div>
+      <section className="queue-panel analytics-services">
+        <div className="panel-header">
+          <div className="panel-title">
+            <SlidersHorizontal size={18} />
+            <h2>Per-service queues</h2>
+          </div>
+        </div>
+        {(analytics.serviceQueues || []).map((item) => (
+          <div className="service-summary-row" key={item.service}>
+            <strong>{item.service}</strong>
+            <span>{item.waiting} waiting</span>
+            <span>{item.completed} served</span>
+            <span>{item.estimatedWait} min total wait</span>
+          </div>
+        ))}
+      </section>
     </section>
   );
 }
@@ -364,8 +437,8 @@ function QRCard({ activeDashboard, customerTicket }) {
 
   return (
     <section className="qr-card" id="qr">
-      <h2>Door QR code</h2>
-      <p>Customers scan to join the queue</p>
+      <h2>Door QR poster</h2>
+      <p>Customers scan, add their phone and service, then leave the lobby until they are notified.</p>
       <div className="qr-box" aria-label="Door QR code preview">
         <div className="qr-grid">
           {cells.map((active, index) => (
@@ -375,6 +448,10 @@ function QRCard({ activeDashboard, customerTicket }) {
         <div className="qr-ticket">{customerTicket}</div>
       </div>
       <p className="qr-link">{joinUrl}</p>
+      <div className="poster-copy">
+        <strong>Scan to join</strong>
+        <span>Live rank, wait time, and SMS/WhatsApp return alerts.</span>
+      </div>
       <button className="secondary-button" type="button" onClick={() => downloadQrCode({ activeDashboard, customerTicket, cells })}>
         <Download size={17} />
         Download QR
@@ -563,7 +640,7 @@ function CustomerJoinView({ activeDashboard, queue, connected }) {
 function App() {
   const isCustomerView = window.location.pathname.startsWith("/join");
   const initialDashboardId = isCustomerView ? shopIdFromPath() : "milos";
-  const { dashboards, activeDashboard, serving, queue, connected } = useQueueSocket(initialDashboardId);
+  const { dashboards, activeDashboard, serving, queue, analytics, connected } = useQueueSocket(initialDashboardId);
   const activeSection = useActiveSection();
   const [signedOut, setSignedOut] = useState(false);
   const previewCustomer = queue[2] ?? queue[0];
@@ -593,6 +670,8 @@ function App() {
         />
         {activeSection === "settings" ? (
           <SettingsPanel activeDashboard={activeDashboard} />
+        ) : activeSection === "analytics" ? (
+          <AnalyticsPanel analytics={analytics || {}} />
         ) : (
           <>
             <div className="content-grid">
@@ -601,7 +680,7 @@ function App() {
                   <CurrentCard serving={serving} />
                   <NextCard activeDashboard={activeDashboard} nextCustomer={queue[0]} />
                 </div>
-                <QueueTable queue={queue} />
+                <QueueTable queue={queue} activeDashboard={activeDashboard} />
               </section>
               <QRCard activeDashboard={activeDashboard} customerTicket={previewCustomer?.ticket ?? "Done"} />
               <PhonePreview activeDashboard={activeDashboard} queue={queue} connected={connected} />

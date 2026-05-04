@@ -39,6 +39,7 @@ const fallbackDashboards = [
     name: "Milo's Barbershop",
     location: "18 Market Lane",
     serviceLabel: "Haircut",
+    serviceOptions: ["Haircut", "Beard trim", "Color", "Kids cut"],
     accent: "#22b157",
   },
 ];
@@ -49,6 +50,14 @@ const fallbackState = {
   serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
   queue: [],
   completed: [],
+  analytics: {
+    waiting: 0,
+    servedToday: 0,
+    noShows: 0,
+    notified: 0,
+    averageWait: 0,
+    serviceQueues: [],
+  },
   updatedAt: new Date().toISOString(),
 };
 
@@ -168,7 +177,7 @@ function SummaryCard({ label, ticket, name, service, accent }) {
   );
 }
 
-function QueueRow({ item, index, accent, onNoShow }) {
+function QueueRow({ item, index, accent, onNoShow, onNotify }) {
   const initials = item.name
     .split(" ")
     .map((part) => part[0])
@@ -188,6 +197,9 @@ function QueueRow({ item, index, accent, onNoShow }) {
         <Text selectable style={styles.serviceText}>
           {item.service}
         </Text>
+        <Text selectable style={styles.phoneText}>
+          {item.phone || "No phone"}
+        </Text>
       </View>
       <View style={styles.queueMeta}>
         <Text selectable style={styles.ticketText}>
@@ -196,6 +208,9 @@ function QueueRow({ item, index, accent, onNoShow }) {
         <Text selectable style={styles.waitText}>
           {item.estimatedWait} min
         </Text>
+        <Pressable disabled={!item.phone} onPress={() => onNotify(item.ticket)} style={[styles.rowMiniButton, !item.phone && styles.rowMiniButtonDisabled]}>
+          <Text style={styles.rowMiniButtonText}>{item.notifiedAt ? "Notified" : "Notify"}</Text>
+        </Pressable>
         <Pressable onPress={() => onNoShow(item.ticket)} style={styles.rowMiniButton}>
           <Text style={styles.rowMiniButtonText}>No-show</Text>
         </Pressable>
@@ -379,6 +394,64 @@ function CustomerAppView({ activeDashboard, queue, connected }) {
   );
 }
 
+function AnalyticsView({ analytics, activeDashboard }) {
+  const cards = [
+    { label: "Waiting", value: analytics.waiting ?? 0 },
+    { label: "Served today", value: analytics.servedToday ?? 0 },
+    { label: "Avg wait", value: `${analytics.averageWait ?? 0} min` },
+    { label: "No-shows", value: analytics.noShows ?? 0 },
+    { label: "Notified", value: analytics.notified ?? 0 },
+  ];
+
+  return (
+    <View style={styles.analyticsShell}>
+      <View style={styles.panel}>
+        <Text selectable style={styles.sectionTitle}>
+          Analytics
+        </Text>
+        <View style={styles.analyticsGrid}>
+          {cards.map((card) => (
+            <View key={card.label} style={styles.analyticsCard}>
+              <Text selectable style={styles.cardLabel}>
+                {card.label}
+              </Text>
+              <Text selectable style={[styles.analyticsValue, { color: activeDashboard.accent }]}>
+                {card.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.panel}>
+        <Text selectable style={styles.sectionTitle}>
+          Service queues
+        </Text>
+        {(analytics.serviceQueues || []).map((item) => (
+          <View key={item.service} style={styles.serviceQueueRow}>
+            <View style={styles.queueDetails}>
+              <Text selectable style={styles.customerName}>
+                {item.service}
+              </Text>
+              <Text selectable style={styles.serviceText}>
+                {item.completed} served today
+              </Text>
+            </View>
+            <View style={styles.queueMeta}>
+              <Text selectable style={styles.ticketText}>
+                {item.waiting}
+              </Text>
+              <Text selectable style={styles.waitText}>
+                {item.estimatedWait} min total
+              </Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function AuthScreen({ onAuthenticate }) {
   const [mode, setMode] = useState("signin");
   const [ownerName, setOwnerName] = useState("Milo");
@@ -508,14 +581,18 @@ function AuthScreen({ onAuthenticate }) {
 }
 
 export default function QueueJumperApp() {
-  const { dashboards, activeDashboard, serving, queue, connected, socket } = useQueueSocket();
+  const { dashboards, activeDashboard, serving, queue, analytics, connected, socket } = useQueueSocket();
   const [section, setSection] = useState("queue");
   const [session, setSession] = useState(null);
   const [walkInName, setWalkInName] = useState("");
+  const [walkInPhone, setWalkInPhone] = useState("");
   const [walkInService, setWalkInService] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("All");
   const nextCustomer = queue[0];
   const previewCustomer = queue[2] ?? queue[0];
   const joinUrl = `${customerBaseUrl}/join/${activeDashboard.slug}`;
+  const serviceOptions = useMemo(() => ["All", ...new Set([activeDashboard.serviceLabel, ...(activeDashboard.serviceOptions || []), ...queue.map((customer) => customer.service)].filter(Boolean))], [activeDashboard, queue]);
+  const visibleQueue = serviceFilter === "All" ? queue : queue.filter((customer) => customer.service === serviceFilter);
 
   function selectDashboard(dashboardId) {
     socket.emit("dashboard:select", dashboardId);
@@ -557,10 +634,20 @@ export default function QueueJumperApp() {
       token: session?.ownerToken || ownerToken,
       shopId: activeDashboard.id,
       name: walkInName || "Walk-in Customer",
+      phone: walkInPhone,
       service: walkInService || activeDashboard.serviceLabel,
     });
     setWalkInName("");
+    setWalkInPhone("");
     setWalkInService("");
+  }
+
+  function notifyCustomer(ticket) {
+    emitOwnerAction("owner:notify", {
+      shopId: activeDashboard.id,
+      ticket,
+      channel: "sms",
+    });
   }
 
   function markNoShow(ticket) {
@@ -595,7 +682,7 @@ export default function QueueJumperApp() {
       <DashboardPicker dashboards={dashboards} activeDashboard={activeDashboard} onSelect={selectDashboard} />
 
       <View style={styles.navTabs}>
-        {["queue", "qr", "customer", "settings"].map((item) => (
+        {["queue", "qr", "analytics", "customer", "settings"].map((item) => (
           <Pressable key={item} onPress={() => setSection(item)} style={[styles.navTab, section === item && styles.navTabActive]}>
             <Text style={[styles.navTabText, section === item && { color: activeDashboard.accent }]}>{item.toUpperCase()}</Text>
           </Pressable>
@@ -604,6 +691,8 @@ export default function QueueJumperApp() {
 
       {section === "customer" ? (
         <CustomerAppView activeDashboard={activeDashboard} queue={queue} connected={connected} />
+      ) : section === "analytics" ? (
+        <AnalyticsView analytics={analytics || fallbackState.analytics} activeDashboard={activeDashboard} />
       ) : section === "settings" ? (
         <View style={styles.panel}>
           <Text selectable style={styles.sectionTitle}>
@@ -630,19 +719,27 @@ export default function QueueJumperApp() {
           </View>
 
           {section === "qr" && (
-            <View style={styles.panel}>
+            <View style={styles.posterPanel}>
+              <Text selectable style={styles.posterBrand}>
+                Queue Jumper
+              </Text>
               <Text selectable style={styles.sectionTitle}>
-                Door QR code
+                Scan to join {activeDashboard.name}
               </Text>
               <Text selectable style={styles.previewCopy}>
-                Customers scan to join {activeDashboard.name}.
+                Live rank, estimated wait, and return alerts on your phone.
               </Text>
               <QrGrid content={joinUrl} ticket={previewCustomer?.ticket ?? "Done"} />
               <Text selectable style={styles.qrLink}>
                 {joinUrl}
               </Text>
+              <View style={styles.posterSteps}>
+                <Text selectable style={styles.posterStep}>1. Scan the code</Text>
+                <Text selectable style={styles.posterStep}>2. Add name, phone, and service</Text>
+                <Text selectable style={styles.posterStep}>3. Come back when notified</Text>
+              </View>
               <Pressable onPress={shareQrLink} style={[styles.primaryButton, { backgroundColor: activeDashboard.accent }]}>
-                <Text style={styles.primaryButtonText}>Share QR link</Text>
+                <Text style={styles.primaryButtonText}>Share printable QR poster link</Text>
               </Pressable>
             </View>
           )}
@@ -675,6 +772,7 @@ export default function QueueJumperApp() {
               </Pressable>
             </View>
             <TextInput value={walkInName} onChangeText={setWalkInName} placeholder="Walk-in name or nickname" style={styles.input} />
+            <TextInput value={walkInPhone} onChangeText={setWalkInPhone} placeholder="Phone for SMS or WhatsApp" keyboardType="phone-pad" style={styles.input} />
             <TextInput value={walkInService} onChangeText={setWalkInService} placeholder={`Service, e.g. ${activeDashboard.serviceLabel}`} style={styles.input} />
             <Pressable onPress={addWalkIn} style={[styles.primaryButton, { backgroundColor: activeDashboard.accent }]}>
               <Text style={styles.primaryButtonText}>Add walk-in</Text>
@@ -687,14 +785,25 @@ export default function QueueJumperApp() {
                 Waiting list
               </Text>
               <Text selectable style={styles.countText}>
-                {queue.length}
+                {visibleQueue.length}
               </Text>
             </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceChips}>
+              {serviceOptions.map((service) => (
+                <Pressable
+                  key={service}
+                  onPress={() => setServiceFilter(service)}
+                  style={[styles.serviceChip, serviceFilter === service && { borderColor: activeDashboard.accent, backgroundColor: "#eefaf2" }]}
+                >
+                  <Text style={[styles.serviceChipText, serviceFilter === service && { color: activeDashboard.accent }]}>{service}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
             <FlatList
               scrollEnabled={false}
-              data={queue}
+              data={visibleQueue}
               keyExtractor={(item) => item.ticket}
-              renderItem={({ item, index }) => <QueueRow item={item} index={index} accent={activeDashboard.accent} onNoShow={markNoShow} />}
+              renderItem={({ item, index }) => <QueueRow item={item} index={index} accent={activeDashboard.accent} onNoShow={markNoShow} onNotify={notifyCustomer} />}
               ItemSeparatorComponent={() => <View style={styles.separator} />}
             />
           </View>
@@ -1032,7 +1141,7 @@ const styles = {
   navTabText: {
     color: "#5d687a",
     fontWeight: "900",
-    fontSize: 12,
+    fontSize: 10,
   },
   summaryGrid: {
     gap: 12,
@@ -1062,6 +1171,11 @@ const styles = {
   serviceText: {
     color: "#697386",
     marginTop: 2,
+  },
+  phoneText: {
+    color: "#8a95a6",
+    fontSize: 12,
+    marginTop: 3,
   },
   actions: {
     flexDirection: "row",
@@ -1104,6 +1218,32 @@ const styles = {
     borderColor: "#e0e7ef",
     padding: 16,
     gap: 14,
+  },
+  posterPanel: {
+    borderRadius: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#d7eadf",
+    padding: 18,
+    gap: 14,
+    alignItems: "center",
+  },
+  posterBrand: {
+    color: "#149542",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  posterSteps: {
+    alignSelf: "stretch",
+    gap: 7,
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f5",
+    paddingTop: 12,
+  },
+  posterStep: {
+    color: "#151922",
+    fontWeight: "800",
+    textAlign: "center",
   },
   pauseButton: {
     minHeight: 38,
@@ -1180,6 +1320,9 @@ const styles = {
     justifyContent: "center",
     marginTop: 7,
   },
+  rowMiniButtonDisabled: {
+    opacity: 0.45,
+  },
   rowMiniButtonText: {
     color: "#697386",
     fontSize: 11,
@@ -1242,6 +1385,55 @@ const styles = {
     color: "#151922",
     textAlign: "center",
     fontWeight: "800",
+  },
+  serviceChips: {
+    gap: 8,
+    paddingRight: 12,
+  },
+  serviceChip: {
+    minHeight: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dce4ec",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  serviceChipText: {
+    color: "#5d687a",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  analyticsShell: {
+    gap: 14,
+  },
+  analyticsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  analyticsCard: {
+    flexGrow: 1,
+    flexBasis: "46%",
+    minHeight: 92,
+    borderRadius: 8,
+    backgroundColor: "#f8fafb",
+    padding: 14,
+    justifyContent: "space-between",
+  },
+  analyticsValue: {
+    fontSize: 28,
+    fontWeight: "900",
+  },
+  serviceQueueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f5",
+    paddingVertical: 12,
   },
   phoneCard: {
     borderRadius: 8,
