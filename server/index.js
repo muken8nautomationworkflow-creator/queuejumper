@@ -462,6 +462,44 @@ app.get("/privacy", (req, res) => {
   res.type("html").send(privacyPolicyHtml());
 });
 
+app.get("/", (req, res) => {
+  const primaryDashboard = dashboards[0];
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Queue Jumper</title>
+  <style>
+    body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f8f4; color: #151922; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 560px); border: 1px solid #e0e7ef; border-radius: 8px; background: #fff; padding: 24px; box-shadow: 0 18px 50px rgba(21,25,34,.08); display: grid; gap: 16px; }
+    h1 { margin: 0; color: #149542; font-size: 36px; line-height: 1; }
+    p { margin: 0; color: #4b5563; line-height: 1.55; }
+    a { min-height: 48px; border-radius: 8px; background: #22b157; color: #fff; text-decoration: none; font-weight: 900; display: grid; place-items: center; padding: 0 16px; }
+    code { background: #eef3f1; border-radius: 6px; padding: 2px 6px; color: #151922; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Queue Jumper</h1>
+    <p>Realtime queue service is running. Customers can join a shop queue from a public QR link and watch their rank update live.</p>
+    <p>Status: <code>ok</code></p>
+    <a href="/join/${primaryDashboard.slug}">Open demo customer queue</a>
+    <a href="/privacy">Privacy policy</a>
+  </main>
+</body>
+</html>`);
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "queue-jumper",
+    dashboards: dashboards.length,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
 app.post("/api/join/:slug", (req, res) => {
   const dashboard = getDashboardBySlug(req.params.slug);
   const state = getState(dashboard.id);
