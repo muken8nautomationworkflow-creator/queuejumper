@@ -17,6 +17,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean) : [];
 const joinRateWindowMs = Number(process.env.JOIN_RATE_WINDOW_MS || 60_000);
 const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
+const duplicateWindowMs = Number(process.env.DUPLICATE_CUSTOMER_WINDOW_MS || 12 * 60 * 60 * 1000);
 const notificationProvider = process.env.NOTIFICATION_PROVIDER || "mock";
 const fcmServiceAccountJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
 const joinAttempts = new Map();
@@ -382,8 +383,13 @@ function normalizeCustomerInput(body = {}) {
 
 function findActiveDuplicate(state, input) {
   const normalizedName = normalizeName(input.name);
+  const now = Date.now();
   const activeCustomers = [state.serving, ...state.queue].filter(Boolean);
   return activeCustomers.find((customer) => {
+    const joinedAtMs = customer.createdAt ? Date.parse(customer.createdAt) : Number(customer.id);
+    const isWithinDuplicateWindow = Number.isFinite(joinedAtMs) && joinedAtMs > 946684800000 && now - joinedAtMs < duplicateWindowMs;
+    if (!isWithinDuplicateWindow) return false;
+
     const samePhone = input.phone && customer.phone === input.phone;
     const sameName = normalizeName(customer.name) === normalizedName;
     return samePhone || (input.phone && sameName && customer.phone === input.phone) || (!input.phone && sameName);
@@ -850,6 +856,7 @@ app.post("/api/join/:slug", (req, res) => {
     isVip,
     vipPlan,
     service,
+    createdAt: new Date().toISOString(),
     joinedAt: nowLabel(),
     status: state.queue.length === 0 ? "next" : "waiting",
   };
@@ -988,6 +995,7 @@ io.on("connection", (socket) => {
       isVip: input.isVip,
       vipPlan: input.vipPlan,
       service: input.service,
+      createdAt: new Date().toISOString(),
       joinedAt: nowLabel(),
       status: state.queue.length === 0 ? "next" : "waiting",
     };

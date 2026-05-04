@@ -32,6 +32,7 @@ REQUIRE_DATABASE=true
 ALLOWED_ORIGINS=https://queuejumper-production.up.railway.app
 JOIN_RATE_WINDOW_MS=60000
 JOIN_RATE_LIMIT=8
+DUPLICATE_CUSTOMER_WINDOW_MS=43200000
 NOTIFICATION_PROVIDER=mock
 ```
 
@@ -65,6 +66,8 @@ FCM_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"your-firebase-p
 ```
 
 FCM needs a device or browser push token from the customer device. A phone number alone cannot receive FCM; use Twilio or WhatsApp Business for phone-number messages.
+
+`DUPLICATE_CUSTOMER_WINDOW_MS=43200000` blocks the same active customer name or phone number for 12 hours. After that window, the customer can join again.
 
 ## EAS Android Build
 
