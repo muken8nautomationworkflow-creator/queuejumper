@@ -19,8 +19,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_SOCKET_URL": "https://your-railway-domain.up.railway.app",
-        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_SOCKET_URL": "https://queuejumper-production.up.railway.app",
+        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://queuejumper-production.up.railway.app",
         "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
       }
     },
@@ -30,8 +30,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_SOCKET_URL": "https://your-railway-domain.up.railway.app",
-        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_SOCKET_URL": "https://queuejumper-production.up.railway.app",
+        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://queuejumper-production.up.railway.app",
         "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
       }
     }
