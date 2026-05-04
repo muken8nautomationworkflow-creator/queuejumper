@@ -1,0 +1,46 @@
+{
+  "cli": {
+    "version": ">= 16.0.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SOCKET_URL": "http://192.168.0.109:3030",
+        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "http://192.168.0.109:3030",
+        "EXPO_PUBLIC_OWNER_TOKEN": "queue-jumper-demo-owner-token"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SOCKET_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_SOCKET_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://your-railway-domain.up.railway.app",
+        "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal"
+      }
+    }
+  }
+}
