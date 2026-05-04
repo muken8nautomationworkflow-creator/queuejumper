@@ -19,6 +19,7 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - VIP booking subscription plans with VIP-first queue priority.
 - No-show customers can rejoin directly after the next waiting ticket.
 - Duplicate active check-ins are blocked by customer name or phone number.
+- n8n appointment-agent webhook for customer appointment requests.
 
 ## Railway Environment
 
@@ -34,6 +35,7 @@ JOIN_RATE_WINDOW_MS=60000
 JOIN_RATE_LIMIT=8
 DUPLICATE_CUSTOMER_WINDOW_MS=43200000
 NOTIFICATION_PROVIDER=mock
+N8N_APPOINTMENT_WEBHOOK_URL=https://your-n8n-domain/webhook/queue-jumper-appointment
 ```
 
 To add the Railway database:
@@ -68,6 +70,8 @@ FCM_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"your-firebase-p
 FCM needs a device or browser push token from the customer device. A phone number alone cannot receive FCM; use Twilio or WhatsApp Business for phone-number messages.
 
 `DUPLICATE_CUSTOMER_WINDOW_MS=43200000` blocks the same active customer name or phone number for 12 hours. After that window, the customer can join again.
+
+`N8N_APPOINTMENT_WEBHOOK_URL` receives appointment requests from `/api/appointments/:shop`. If it is not set, appointment requests are stored and logged in mock mode.
 
 ## EAS Android Build
 

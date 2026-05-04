@@ -11,6 +11,8 @@ const httpServer = createServer(app);
 const { Pool } = pg;
 const ownerToken = process.env.QUEUE_JUMPER_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 const dataFile = process.env.QUEUE_JUMPER_DATA_FILE || join(process.cwd(), "data", "queue-state.json");
+const clientDist = join(process.cwd(), "dist");
+const clientIndex = join(clientDist, "index.html");
 const databaseUrl = process.env.DATABASE_URL;
 const requireDatabase = process.env.REQUIRE_DATABASE === "true";
 const isProduction = process.env.NODE_ENV === "production";
@@ -20,6 +22,7 @@ const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
 const duplicateWindowMs = Number(process.env.DUPLICATE_CUSTOMER_WINDOW_MS || 12 * 60 * 60 * 1000);
 const notificationProvider = process.env.NOTIFICATION_PROVIDER || "mock";
 const fcmServiceAccountJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
+const n8nAppointmentWebhookUrl = process.env.N8N_APPOINTMENT_WEBHOOK_URL || "";
 const joinAttempts = new Map();
 const dbPool = databaseUrl ? new Pool({
   connectionString: databaseUrl,
@@ -150,6 +153,7 @@ function createState(dashboard) {
       status: index === 0 ? "next" : "waiting",
     })),
     completed: [],
+    appointments: [],
     notifications: [],
     subscriptionSettings: {
       enabled: true,
@@ -381,6 +385,41 @@ function normalizeCustomerInput(body = {}) {
   return { name, service, phone, pushToken, isVip, vipPlan };
 }
 
+function normalizeAppointmentInput(body = {}) {
+  const customer = normalizeCustomerInput(body);
+  const preferredAt = String(body.preferredAt || body.appointmentAt || "").trim().slice(0, 80);
+  const note = String(body.note || "").trim().slice(0, 160);
+  return { ...customer, preferredAt, note };
+}
+
+async function sendAppointmentToN8n({ dashboard, appointment }) {
+  if (!n8nAppointmentWebhookUrl) {
+    console.log(`[mock:n8n] Appointment request for ${dashboard.name}: ${appointment.name} ${appointment.preferredAt}`);
+    return { ok: true, provider: "mock", id: `mock-${appointment.id}` };
+  }
+
+  const response = await fetch(n8nAppointmentWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "queue-jumper",
+      shop: {
+        id: dashboard.id,
+        slug: dashboard.slug,
+        name: dashboard.name,
+        location: dashboard.location,
+      },
+      appointment,
+    }),
+  });
+
+  if (!response.ok) {
+    return { ok: false, provider: "n8n", error: `n8n webhook returned ${response.status}` };
+  }
+
+  return { ok: true, provider: "n8n" };
+}
+
 function findActiveDuplicate(state, input) {
   const normalizedName = normalizeName(input.name);
   const now = Date.now();
@@ -483,6 +522,7 @@ function snapshot(shopId = "milos") {
       status: index === 0 ? "next" : "waiting",
     })),
     completed: state.completed,
+    appointments: state.appointments || [],
     notifications: state.notifications || [],
     analytics: makeAnalytics(dashboard, state),
     paused: Boolean(state.paused),
@@ -648,7 +688,16 @@ function customerPageHtml(dashboard) {
             ${vipOptions}
           </select>
         </label>
-        <button id="joinButton" type="submit">Join queue</button>
+        <label>Visit type
+          <select name="bookingType" id="bookingType">
+            <option value="queue">Join live queue</option>
+            <option value="appointment">Request appointment</option>
+          </select>
+        </label>
+        <label>Preferred appointment time
+          <input name="preferredAt" type="datetime-local" />
+        </label>
+        <button id="joinButton" type="submit">Continue</button>
         <p class="message" id="joinMessage"></p>
       </form>
     </section>
@@ -721,7 +770,8 @@ function customerPageHtml(dashboard) {
       joinButton.disabled = true;
       joinMessage.textContent = "Joining...";
       const form = new FormData(joinForm);
-      const response = await fetch("/api/join/${dashboard.slug}", {
+      const isAppointment = form.get("bookingType") === "appointment";
+      const response = await fetch(isAppointment ? "/api/appointments/${dashboard.slug}" : "/api/join/${dashboard.slug}", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -729,11 +779,16 @@ function customerPageHtml(dashboard) {
           phone: form.get("phone"),
           service: form.get("service"),
           vipPlan: form.get("vipPlan"),
+          preferredAt: form.get("preferredAt"),
         }),
       });
       const result = await response.json();
       if (result.ok) myTicket = result.customer.ticket;
-      joinMessage.textContent = result.ok ? "You're in. Your ticket is " + result.customer.ticket + "." : result.error;
+      joinMessage.textContent = result.ok
+        ? isAppointment
+          ? "Appointment request sent. The shop will confirm soon."
+          : "You're in. Your ticket is " + result.customer.ticket + "."
+        : result.error;
       joinButton.disabled = false;
     });
   </script>
@@ -746,6 +801,11 @@ app.get("/privacy", (req, res) => {
 });
 
 app.get("/", (req, res) => {
+  if (existsSync(clientIndex)) {
+    res.sendFile(clientIndex);
+    return;
+  }
+
   const primaryDashboard = dashboards[0];
   res.type("html").send(`<!doctype html>
 <html lang="en">
@@ -773,6 +833,8 @@ app.get("/", (req, res) => {
 </body>
 </html>`);
 });
+
+app.use(express.static(clientDist));
 
 app.get("/health", (req, res) => {
   res.json({
@@ -812,6 +874,60 @@ app.get("/health/db", async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
   }
+});
+
+app.post("/api/appointments/:slug", async (req, res) => {
+  if (isRateLimited(req)) {
+    res.status(429).json({ ok: false, error: "Too many appointment attempts. Please wait a minute and try again." });
+    return;
+  }
+
+  const dashboard = getDashboardBySlug(req.params.slug);
+  const state = getState(dashboard.id);
+  const input = normalizeAppointmentInput(req.body);
+
+  if (!input.phone) {
+    res.status(400).json({ ok: false, error: "Phone number is required for appointment requests." });
+    return;
+  }
+
+  if (!input.preferredAt) {
+    res.status(400).json({ ok: false, error: "Preferred appointment time is required." });
+    return;
+  }
+
+  const appointment = {
+    id: Date.now(),
+    ticket: nextTicketFor(dashboard, state),
+    name: input.name,
+    phone: input.phone,
+    service: input.service,
+    isVip: input.isVip,
+    vipPlan: input.vipPlan,
+    preferredAt: input.preferredAt,
+    note: input.note,
+    status: "requested",
+    createdAt: new Date().toISOString(),
+  };
+
+  const result = await sendAppointmentToN8n({ dashboard, appointment });
+  if (!result.ok) {
+    res.status(502).json({ ok: false, error: result.error });
+    return;
+  }
+
+  state.appointments = [appointment, ...(state.appointments || [])].slice(0, 20);
+  makeNotification(state, `${appointment.ticket} requested appointment for ${appointment.preferredAt}.`);
+  emitDashboardUpdate(dashboard.id);
+  res.status(201).json({
+    ok: true,
+    provider: result.provider,
+    customer: {
+      ticket: appointment.ticket,
+      appointmentId: appointment.id,
+      status: appointment.status,
+    },
+  });
 });
 
 app.post("/api/join/:slug", (req, res) => {

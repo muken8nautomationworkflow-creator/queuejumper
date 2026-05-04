@@ -54,6 +54,7 @@ const fallbackState = {
   serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
   queue: [],
   completed: [],
+  appointments: [],
   analytics: {
     waiting: 0,
     servedToday: 0,
@@ -594,7 +595,7 @@ function AuthScreen({ onAuthenticate }) {
 }
 
 export default function QueueJumperApp() {
-  const { dashboards, activeDashboard, serving, queue, completed, analytics, connected, socket } = useQueueSocket();
+  const { dashboards, activeDashboard, serving, queue, completed, appointments, analytics, connected, socket } = useQueueSocket();
   const [section, setSection] = useState("queue");
   const [session, setSession] = useState(null);
   const [walkInName, setWalkInName] = useState("");
@@ -939,6 +940,38 @@ export default function QueueJumperApp() {
               ))}
             </View>
           )}
+
+          <View style={styles.panel}>
+            <View style={styles.panelHeader}>
+              <Text selectable style={styles.sectionTitle}>
+                Appointment agent
+              </Text>
+              <Text selectable style={styles.countText}>
+                {(appointments || []).length}
+              </Text>
+            </View>
+            {(appointments || []).length === 0 ? (
+              <Text selectable style={styles.previewCopy}>
+                n8n appointment requests will appear here.
+              </Text>
+            ) : (
+              (appointments || []).map((appointment) => (
+                <View key={appointment.id} style={styles.rejoinRow}>
+                  <View style={styles.queueDetails}>
+                    <Text selectable style={styles.customerName}>
+                      {appointment.name}
+                    </Text>
+                    <Text selectable style={styles.serviceText}>
+                      {appointment.ticket} - {appointment.service} - {appointment.preferredAt}
+                    </Text>
+                  </View>
+                  <Text selectable style={styles.vipBadge}>
+                    {appointment.status}
+                  </Text>
+                </View>
+              ))
+            )}
+          </View>
 
           <CustomerPreview activeDashboard={activeDashboard} queue={queue} connected={connected} />
         </>

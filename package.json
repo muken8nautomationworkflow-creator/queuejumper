@@ -12,6 +12,7 @@
     "web": "expo start --web",
     "vite:client": "vite --host 127.0.0.1",
     "vite:dev": "concurrently \"vite --host 127.0.0.1\" \"node server/index.js\"",
+    "build": "vite build",
     "vite:build": "vite build",
     "vite:preview": "vite preview --host 127.0.0.1",
     "railway:start": "node server/index.js",

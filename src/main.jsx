@@ -24,7 +24,20 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const socket = io("http://127.0.0.1:3030", {
+function getSocketUrl() {
+  if (import.meta.env.VITE_SOCKET_URL) {
+    return import.meta.env.VITE_SOCKET_URL.replace(/\/$/, "");
+  }
+
+  const { protocol, hostname, origin } = window.location;
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return "http://127.0.0.1:3030";
+  }
+
+  return origin.replace(/\/$/, "");
+}
+
+const socket = io(getSocketUrl(), {
   transports: ["websocket", "polling"],
 });
 const ownerToken = import.meta.env.VITE_OWNER_TOKEN || "queue-jumper-demo-owner-token";
@@ -58,7 +71,8 @@ function getLocalJoinUrl(activeDashboard) {
 
   const browserHost = window.location.hostname;
   const shareHost = browserHost === "localhost" || browserHost === "127.0.0.1" ? "192.168.0.109" : browserHost;
-  return `${window.location.protocol}//${shareHost}:3030/join/${activeDashboard.slug}`;
+  const port = browserHost === "localhost" || browserHost === "127.0.0.1" ? ":3030" : "";
+  return `${window.location.protocol}//${shareHost}${port}/join/${activeDashboard.slug}`;
 }
 
 function downloadQrCode({ activeDashboard, customerTicket, cells }) {
@@ -120,6 +134,7 @@ function useQueueSocket(initialDashboardId = "milos") {
     serving: { ticket: "A15", name: "Alex Thompson", service: "Haircut" },
     queue: [],
     completed: [],
+    appointments: [],
     analytics: { waiting: 0, servedToday: 0, noShows: 0, notified: 0, vipWaiting: 0, vipServed: 0, averageWait: 0, serviceQueues: [] },
     updatedAt: new Date().toISOString(),
   });
@@ -422,6 +437,32 @@ function NoShowPanel({ completed, activeDashboard }) {
   );
 }
 
+function AppointmentPanel({ appointments = [] }) {
+  return (
+    <section className="queue-panel no-show-panel">
+      <div className="panel-header">
+        <div className="panel-title">
+          <Settings size={18} />
+          <h2>n8n appointment agent</h2>
+          <span>{appointments.length}</span>
+        </div>
+      </div>
+      {appointments.length === 0 ? (
+        <div className="panel-foot">Appointment requests from the QR page will appear here.</div>
+      ) : (
+        appointments.map((appointment) => (
+          <div className="service-summary-row" key={appointment.id}>
+            <strong>{appointment.name}</strong>
+            <span>{appointment.ticket}</span>
+            <span>{appointment.service}</span>
+            <span>{appointment.preferredAt}</span>
+          </div>
+        ))
+      )}
+    </section>
+  );
+}
+
 function AnalyticsPanel({ analytics }) {
   const cards = [
     ["Waiting", analytics.waiting ?? 0],
@@ -698,7 +739,7 @@ function CustomerJoinView({ activeDashboard, queue, connected }) {
 function App() {
   const isCustomerView = window.location.pathname.startsWith("/join");
   const initialDashboardId = isCustomerView ? shopIdFromPath() : "milos";
-  const { dashboards, activeDashboard, serving, queue, completed, analytics, connected } = useQueueSocket(initialDashboardId);
+  const { dashboards, activeDashboard, serving, queue, completed, appointments, analytics, connected } = useQueueSocket(initialDashboardId);
   const activeSection = useActiveSection();
   const [signedOut, setSignedOut] = useState(false);
   const previewCustomer = queue[2] ?? queue[0];
@@ -740,6 +781,7 @@ function App() {
                 </div>
                 <QueueTable queue={queue} activeDashboard={activeDashboard} />
                 <NoShowPanel completed={completed} activeDashboard={activeDashboard} />
+                <AppointmentPanel appointments={appointments} />
               </section>
               <QRCard activeDashboard={activeDashboard} customerTicket={previewCustomer?.ticket ?? "Done"} />
               <PhonePreview activeDashboard={activeDashboard} queue={queue} connected={connected} />
