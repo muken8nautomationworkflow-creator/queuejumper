@@ -8,11 +8,31 @@ const app = express();
 const httpServer = createServer(app);
 const ownerToken = process.env.QUEUE_JUMPER_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 const dataFile = process.env.QUEUE_JUMPER_DATA_FILE || join(process.cwd(), "data", "queue-state.json");
+const isProduction = process.env.NODE_ENV === "production";
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean) : [];
+const joinRateWindowMs = Number(process.env.JOIN_RATE_WINDOW_MS || 60_000);
+const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
+const joinAttempts = new Map();
+
+if (isProduction && ownerToken === "queue-jumper-demo-owner-token") {
+  throw new Error("QUEUE_JUMPER_OWNER_TOKEN must be set to a private value in production.");
+}
 
 app.use(express.json({ limit: "32kb" }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+  if (req.secure || req.headers["x-forwarded-proto"] === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : "*",
+    origin: allowedOrigins.length > 0 ? allowedOrigins : isProduction ? false : "*",
   },
 });
 
@@ -162,6 +182,15 @@ function normalizeCustomerInput(body = {}) {
   const name = String(body.name || "").trim().slice(0, 80) || "Guest Customer";
   const service = String(body.service || "").trim().slice(0, 80) || "Walk-in";
   return { name, service };
+}
+
+function isRateLimited(req) {
+  const key = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const attempts = (joinAttempts.get(key) || []).filter((timestamp) => now - timestamp < joinRateWindowMs);
+  attempts.push(now);
+  joinAttempts.set(key, attempts);
+  return attempts.length > joinRateLimit;
 }
 
 function isOwnerAuthorized(socket, payload) {
@@ -501,6 +530,11 @@ app.get("/health", (req, res) => {
 });
 
 app.post("/api/join/:slug", (req, res) => {
+  if (isRateLimited(req)) {
+    res.status(429).json({ ok: false, error: "Too many check-in attempts. Please wait a minute and try again." });
+    return;
+  }
+
   const dashboard = getDashboardBySlug(req.params.slug);
   const state = getState(dashboard.id);
 

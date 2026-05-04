@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "npm run railway:start",
-    "healthcheckPath": "/join/milos-barbershop",
+    "healthcheckPath": "/health",
     "healthcheckTimeout": 100
   }
 }
