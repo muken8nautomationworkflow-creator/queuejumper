@@ -646,6 +646,19 @@ export default function QueueJumperApp() {
   }
 
   function addWalkIn() {
+    const normalizedName = (walkInName || "Walk-in Customer").trim().replace(/\s+/g, " ").toLowerCase();
+    const normalizedPhone = walkInPhone.trim().replace(/[^\d+]/g, "");
+    const duplicate = queue.find((customer) => {
+      const sameName = customer.name.trim().replace(/\s+/g, " ").toLowerCase() === normalizedName;
+      const samePhone = normalizedPhone && customer.phone === normalizedPhone;
+      return samePhone || (!normalizedPhone && sameName) || (sameName && samePhone);
+    });
+
+    if (duplicate) {
+      Alert.alert("Already in queue", `${duplicate.ticket} is already active for this name or phone number.`);
+      return;
+    }
+
     socket.emit("owner:add", {
       token: session?.ownerToken || ownerToken,
       shopId: activeDashboard.id,

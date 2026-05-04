@@ -306,6 +306,10 @@ function normalizePhone(value = "") {
   return String(value).trim().replace(/[^\d+]/g, "").slice(0, 24);
 }
 
+function normalizeName(value = "") {
+  return String(value).trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 async function sendCustomerMessage({ dashboard, customer, message, channel = "sms" }) {
   if (notificationProvider === "fcm") {
     const pushToken = customer?.pushToken || customer?.fcmToken;
@@ -374,6 +378,16 @@ function normalizeCustomerInput(body = {}) {
   const vipPlan = String(body.vipPlan || "").trim().slice(0, 40);
   const isVip = Boolean(body.isVip || vipPlan);
   return { name, service, phone, pushToken, isVip, vipPlan };
+}
+
+function findActiveDuplicate(state, input) {
+  const normalizedName = normalizeName(input.name);
+  const activeCustomers = [state.serving, ...state.queue].filter(Boolean);
+  return activeCustomers.find((customer) => {
+    const samePhone = input.phone && customer.phone === input.phone;
+    const sameName = normalizeName(customer.name) === normalizedName;
+    return samePhone || (input.phone && sameName && customer.phone === input.phone) || (!input.phone && sameName);
+  });
 }
 
 function enqueueCustomer(state, customer) {
@@ -615,7 +629,7 @@ function customerPageHtml(dashboard) {
           <input name="name" maxlength="80" placeholder="e.g. Sam" autocomplete="name" />
         </label>
         <label>Phone for SMS or WhatsApp
-          <input name="phone" maxlength="24" placeholder="+1 555 010 1234" autocomplete="tel" inputmode="tel" />
+          <input name="phone" maxlength="24" placeholder="+1 555 010 1234" autocomplete="tel" inputmode="tel" required />
         </label>
         <label>Service
           <select name="service">
@@ -809,6 +823,24 @@ app.post("/api/join/:slug", (req, res) => {
   }
 
   const { name, service, phone, pushToken, isVip, vipPlan } = normalizeCustomerInput(req.body);
+  if (!phone) {
+    res.status(400).json({ ok: false, error: "Phone number is required to join the queue." });
+    return;
+  }
+
+  const duplicate = findActiveDuplicate(state, { name, phone });
+  if (duplicate) {
+    res.status(409).json({
+      ok: false,
+      error: `${duplicate.ticket} is already active for this name or phone number.`,
+      customer: {
+        ticket: duplicate.ticket,
+        rank: state.queue.findIndex((item) => item.ticket === duplicate.ticket) + 1,
+      },
+    });
+    return;
+  }
+
   const customer = {
     id: Date.now(),
     ticket: nextTicketFor(dashboard, state),
@@ -941,6 +973,12 @@ io.on("connection", (socket) => {
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     const input = normalizeCustomerInput({ name, phone, pushToken, isVip, vipPlan, service: service || dashboard.serviceLabel });
+    const duplicate = findActiveDuplicate(state, input);
+    if (duplicate) {
+      socket.emit("owner:error", `${duplicate.ticket} is already active for this name or phone number.`);
+      return;
+    }
+
     const customer = {
       id: Date.now(),
       ticket: nextTicketFor(dashboard, state),

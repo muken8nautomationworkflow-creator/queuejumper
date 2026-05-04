@@ -18,6 +18,7 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - Owner Notify button, analytics screen, printable QR poster, and per-service queue filters.
 - VIP booking subscription plans with VIP-first queue priority.
 - No-show customers can rejoin directly after the next waiting ticket.
+- Duplicate active check-ins are blocked by customer name or phone number.
 
 ## Railway Environment
 
