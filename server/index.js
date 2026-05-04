@@ -1,10 +1,15 @@
 import express from "express";
 import { createServer } from "node:http";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Server } from "socket.io";
 
 const app = express();
 const httpServer = createServer(app);
 const ownerToken = process.env.QUEUE_JUMPER_OWNER_TOKEN || "queue-jumper-demo-owner-token";
+const dataFile = process.env.QUEUE_JUMPER_DATA_FILE || join(process.cwd(), "data", "queue-state.json");
+
+app.use(express.json({ limit: "32kb" }));
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : "*",
@@ -75,12 +80,42 @@ function createState(dashboard) {
       status: index === 0 ? "next" : "waiting",
     })),
     completed: [],
+    notifications: [],
+    paused: false,
   };
 }
 
 for (const dashboard of dashboards) {
   states.set(dashboard.id, createState(dashboard));
 }
+
+function loadPersistedState() {
+  if (!existsSync(dataFile)) return;
+
+  try {
+    const saved = JSON.parse(readFileSync(dataFile, "utf8"));
+    for (const [shopId, state] of Object.entries(saved.states || {})) {
+      const dashboard = getDashboard(shopId);
+      states.set(dashboard.id, {
+        ...createState(dashboard),
+        ...state,
+      });
+    }
+  } catch (error) {
+    console.warn("Could not load persisted queue state:", error.message);
+  }
+}
+
+function savePersistedState() {
+  try {
+    mkdirSync(dirname(dataFile), { recursive: true });
+    writeFileSync(dataFile, JSON.stringify({ states: Object.fromEntries(states) }, null, 2));
+  } catch (error) {
+    console.warn("Could not save queue state:", error.message);
+  }
+}
+
+loadPersistedState();
 
 const waitForIndex = (index) => (index + 1) * 5 + 3;
 
@@ -92,6 +127,41 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;",
   }[char]));
+}
+
+function customerInitials(name = "Guest") {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "G";
+}
+
+function nowLabel() {
+  return new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function makeNotification(state, message) {
+  state.notifications = [
+    { id: Date.now(), message, createdAt: new Date().toISOString() },
+    ...(state.notifications || []),
+  ].slice(0, 8);
+}
+
+function nextTicketFor(dashboard, state) {
+  const prefix = dashboard.serving.ticket.match(/^[A-Z]+/)?.[0] || "Q";
+  const numbers = [state.serving, ...state.queue, ...state.completed]
+    .map((item) => Number(String(item.ticket).replace(/\D/g, "")))
+    .filter(Number.isFinite);
+  const nextNumber = Math.max(0, ...numbers) + 1;
+  return `${prefix}${String(nextNumber).padStart(2, "0")}`;
+}
+
+function normalizeCustomerInput(body = {}) {
+  const name = String(body.name || "").trim().slice(0, 80) || "Guest Customer";
+  const service = String(body.service || "").trim().slice(0, 80) || "Walk-in";
+  return { name, service };
 }
 
 function getDashboard(shopId = "milos") {
@@ -126,7 +196,11 @@ function snapshot(shopId = "milos") {
   const state = getState(dashboard.id);
   return {
     dashboards: publicDashboards(),
-    activeDashboard: publicDashboards().find((item) => item.id === dashboard.id),
+    activeDashboard: {
+      ...publicDashboards().find((item) => item.id === dashboard.id),
+      paused: Boolean(state.paused),
+      notifications: state.notifications || [],
+    },
     serving: state.serving,
     queue: state.queue.map((customer, index) => ({
       ...customer,
@@ -135,6 +209,8 @@ function snapshot(shopId = "milos") {
       status: index === 0 ? "next" : "waiting",
     })),
     completed: state.completed,
+    notifications: state.notifications || [],
+    paused: Boolean(state.paused),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -143,21 +219,27 @@ function publicSnapshot(shopId = "milos") {
   const dashboard = getDashboard(shopId);
   const state = getState(dashboard.id);
   return {
-    activeDashboard: publicDashboards().find((item) => item.id === dashboard.id),
+    activeDashboard: {
+      ...publicDashboards().find((item) => item.id === dashboard.id),
+      paused: Boolean(state.paused),
+    },
     serving: {
       ticket: state.serving.ticket,
     },
     queue: state.queue.map((customer, index) => ({
       ticket: customer.ticket,
+      initials: customerInitials(customer.name),
       rank: index + 1,
       estimatedWait: waitForIndex(index),
       status: index === 0 ? "next" : "waiting",
     })),
+    paused: Boolean(state.paused),
     updatedAt: new Date().toISOString(),
   };
 }
 
 function emitDashboardUpdate(shopId) {
+  savePersistedState();
   io.to(`${shopId}:owners`).emit("queue:update", snapshot(shopId));
   io.to(`${shopId}:public`).emit("queue:public", publicSnapshot(shopId));
 }
@@ -242,6 +324,12 @@ function customerPageHtml(dashboard) {
     .mini:first-child { border-top: 0; }
     .ticket { font-weight: 900; }
     .empty { color: #697386; }
+    form { display: grid; gap: 10px; }
+    label { display: grid; gap: 6px; color: #4b5563; font-size: 13px; font-weight: 800; }
+    input, select { width: 100%; min-height: 46px; border: 1px solid #dce4ec; border-radius: 8px; padding: 0 12px; font: inherit; background: #fbfdff; color: #151922; }
+    button { min-height: 50px; border: 0; border-radius: 8px; background: ${safeAccent}; color: #fff; font: inherit; font-weight: 900; }
+    button:disabled { opacity: .55; }
+    .message { color: #149542; font-weight: 800; }
   </style>
 </head>
 <body>
@@ -256,6 +344,24 @@ function customerPageHtml(dashboard) {
       </div>
       <h1>You're checked in</h1>
       <p>Keep this page open. Your rank updates automatically when the shop advances the line.</p>
+    </section>
+    <section class="card" id="joinCard">
+      <h2>Join this queue</h2>
+      <form id="joinForm">
+        <label>Nickname
+          <input name="name" maxlength="80" placeholder="e.g. Sam" autocomplete="name" />
+        </label>
+        <label>Service
+          <select name="service">
+            <option>${escapeHtml(dashboard.serviceLabel)}</option>
+            <option>Walk-in</option>
+            <option>Pickup</option>
+            <option>Consultation</option>
+          </select>
+        </label>
+        <button id="joinButton" type="submit">Join queue</button>
+        <p class="message" id="joinMessage"></p>
+      </form>
     </section>
     <section class="card rank">
       <div class="metric"><div class="label">Ticket</div><span class="value" id="ticket">...</span></div>
@@ -289,6 +395,10 @@ function customerPageHtml(dashboard) {
     const nextMark = document.getElementById("nextMark");
     const queueAhead = document.getElementById("queueAhead");
     const suggestion = document.getElementById("suggestion");
+    const joinForm = document.getElementById("joinForm");
+    const joinButton = document.getElementById("joinButton");
+    const joinMessage = document.getElementById("joinMessage");
+    let myTicket = null;
 
     socket.on("connect", () => {
       live.textContent = "Live";
@@ -300,7 +410,9 @@ function customerPageHtml(dashboard) {
     });
 
     socket.on("queue:public", (state) => {
-      const customer = state.queue[2] || state.queue[0];
+      joinButton.disabled = Boolean(state.paused);
+      if (state.paused && !joinMessage.textContent) joinMessage.textContent = "This shop has paused new check-ins.";
+      const customer = state.queue.find((item) => item.ticket === myTicket) || state.queue[2] || state.queue[0];
       const currentRank = customer?.rank || 0;
       ticket.textContent = customer?.ticket || "Done";
       rank.textContent = currentRank || "-";
@@ -314,6 +426,25 @@ function customerPageHtml(dashboard) {
         ? visible.map((item, index) => '<div class="mini"><span class="ticket">' + item.ticket + '</span><span>' + (index + 1 === currentRank ? 'You' : index === 0 ? 'Next' : 'Waiting') + '</span></div>').join("")
         : '<span class="empty">The queue is clear.</span>';
     });
+
+    joinForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      joinButton.disabled = true;
+      joinMessage.textContent = "Joining...";
+      const form = new FormData(joinForm);
+      const response = await fetch("/api/join/${dashboard.slug}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          service: form.get("service"),
+        }),
+      });
+      const result = await response.json();
+      if (result.ok) myTicket = result.customer.ticket;
+      joinMessage.textContent = result.ok ? "You're in. Your ticket is " + result.customer.ticket + "." : result.error;
+      joinButton.disabled = false;
+    });
   </script>
 </body>
 </html>`;
@@ -321,6 +452,38 @@ function customerPageHtml(dashboard) {
 
 app.get("/privacy", (req, res) => {
   res.type("html").send(privacyPolicyHtml());
+});
+
+app.post("/api/join/:slug", (req, res) => {
+  const dashboard = getDashboardBySlug(req.params.slug);
+  const state = getState(dashboard.id);
+
+  if (state.paused) {
+    res.status(409).json({ ok: false, error: "This shop has paused new check-ins." });
+    return;
+  }
+
+  const { name, service } = normalizeCustomerInput(req.body);
+  const customer = {
+    id: Date.now(),
+    ticket: nextTicketFor(dashboard, state),
+    name,
+    service,
+    joinedAt: nowLabel(),
+    status: state.queue.length === 0 ? "next" : "waiting",
+  };
+
+  state.queue.push(customer);
+  makeNotification(state, `${customer.ticket} joined for ${service}.`);
+  emitDashboardUpdate(dashboard.id);
+  res.status(201).json({
+    ok: true,
+    customer: {
+      ticket: customer.ticket,
+      rank: state.queue.length,
+      estimatedWait: waitForIndex(state.queue.length - 1),
+    },
+  });
 });
 
 app.get("/join/:slug", (req, res) => {
@@ -381,6 +544,7 @@ io.on("connection", (socket) => {
       name: nextCustomer.name,
       service: nextCustomer.service,
     };
+    makeNotification(state, `${nextCustomer.ticket} is now being served.`);
     state.queue = rest.map((customer, index) => ({
       ...customer,
       status: index === 0 ? "next" : "waiting",
@@ -396,6 +560,58 @@ io.on("connection", (socket) => {
 
     const dashboard = getDashboard(shopId ?? activeShopId);
     states.set(dashboard.id, createState(dashboard));
+    emitDashboardUpdate(dashboard.id);
+  });
+
+  socket.on("owner:pause", ({ shopId, paused } = {}) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const dashboard = getDashboard(shopId ?? activeShopId);
+    const state = getState(dashboard.id);
+    state.paused = Boolean(paused);
+    makeNotification(state, state.paused ? "New customer check-ins are paused." : "New customer check-ins are open.");
+    emitDashboardUpdate(dashboard.id);
+  });
+
+  socket.on("owner:add", ({ shopId, name, service } = {}) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const dashboard = getDashboard(shopId ?? activeShopId);
+    const state = getState(dashboard.id);
+    const input = normalizeCustomerInput({ name, service: service || dashboard.serviceLabel });
+    const customer = {
+      id: Date.now(),
+      ticket: nextTicketFor(dashboard, state),
+      name: input.name,
+      service: input.service,
+      joinedAt: nowLabel(),
+      status: state.queue.length === 0 ? "next" : "waiting",
+    };
+
+    state.queue.push(customer);
+    makeNotification(state, `${customer.ticket} was added by owner.`);
+    emitDashboardUpdate(dashboard.id);
+  });
+
+  socket.on("owner:remove", ({ shopId, ticket, reason = "removed" } = {}) => {
+    if (!socket.data.isOwner) {
+      socket.emit("owner:error", "Owner authentication is required.");
+      return;
+    }
+
+    const dashboard = getDashboard(shopId ?? activeShopId);
+    const state = getState(dashboard.id);
+    const index = state.queue.findIndex((customer) => customer.ticket === ticket);
+    if (index === -1) return;
+    const [removed] = state.queue.splice(index, 1);
+    state.completed = [{ ...removed, completedAt: new Date().toISOString(), reason }, ...state.completed].slice(0, 8);
+    makeNotification(state, `${removed.ticket} marked ${reason}.`);
     emitDashboardUpdate(dashboard.id);
   });
 });

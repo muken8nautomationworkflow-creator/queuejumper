@@ -168,7 +168,7 @@ function SummaryCard({ label, ticket, name, service, accent }) {
   );
 }
 
-function QueueRow({ item, index, accent }) {
+function QueueRow({ item, index, accent, onNoShow }) {
   const initials = item.name
     .split(" ")
     .map((part) => part[0])
@@ -196,6 +196,9 @@ function QueueRow({ item, index, accent }) {
         <Text selectable style={styles.waitText}>
           {item.estimatedWait} min
         </Text>
+        <Pressable onPress={() => onNoShow(item.ticket)} style={styles.rowMiniButton}>
+          <Text style={styles.rowMiniButtonText}>No-show</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -508,6 +511,8 @@ export default function QueueJumperApp() {
   const { dashboards, activeDashboard, serving, queue, connected, socket } = useQueueSocket();
   const [section, setSection] = useState("queue");
   const [session, setSession] = useState(null);
+  const [walkInName, setWalkInName] = useState("");
+  const [walkInService, setWalkInService] = useState("");
   const nextCustomer = queue[0];
   const previewCustomer = queue[2] ?? queue[0];
   const joinUrl = `${customerBaseUrl}/join/${activeDashboard.slug}`;
@@ -538,6 +543,24 @@ export default function QueueJumperApp() {
   function signOut() {
     setSession(null);
     setSection("queue");
+  }
+
+  function addWalkIn() {
+    socket.emit("owner:add", {
+      shopId: activeDashboard.id,
+      name: walkInName || "Walk-in Customer",
+      service: walkInService || activeDashboard.serviceLabel,
+    });
+    setWalkInName("");
+    setWalkInService("");
+  }
+
+  function markNoShow(ticket) {
+    socket.emit("owner:remove", {
+      shopId: activeDashboard.id,
+      ticket,
+      reason: "no-show",
+    });
   }
 
   if (!session) {
@@ -631,6 +654,27 @@ export default function QueueJumperApp() {
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
               <Text selectable style={styles.sectionTitle}>
+                Owner controls
+              </Text>
+              <Pressable
+                onPress={() => socket.emit("owner:pause", { shopId: activeDashboard.id, paused: !Boolean(activeDashboard.paused) })}
+                style={[styles.pauseButton, activeDashboard.paused && styles.pauseButtonOn]}
+              >
+                <Text style={[styles.pauseButtonText, activeDashboard.paused && styles.pauseButtonTextOn]}>
+                  {activeDashboard.paused ? "Resume check-ins" : "Pause check-ins"}
+                </Text>
+              </Pressable>
+            </View>
+            <TextInput value={walkInName} onChangeText={setWalkInName} placeholder="Walk-in name or nickname" style={styles.input} />
+            <TextInput value={walkInService} onChangeText={setWalkInService} placeholder={`Service, e.g. ${activeDashboard.serviceLabel}`} style={styles.input} />
+            <Pressable onPress={addWalkIn} style={[styles.primaryButton, { backgroundColor: activeDashboard.accent }]}>
+              <Text style={styles.primaryButtonText}>Add walk-in</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.panel}>
+            <View style={styles.panelHeader}>
+              <Text selectable style={styles.sectionTitle}>
                 Waiting list
               </Text>
               <Text selectable style={styles.countText}>
@@ -641,9 +685,36 @@ export default function QueueJumperApp() {
               scrollEnabled={false}
               data={queue}
               keyExtractor={(item) => item.ticket}
-              renderItem={({ item, index }) => <QueueRow item={item} index={index} accent={activeDashboard.accent} />}
+              renderItem={({ item, index }) => <QueueRow item={item} index={index} accent={activeDashboard.accent} onNoShow={markNoShow} />}
               ItemSeparatorComponent={() => <View style={styles.separator} />}
             />
+          </View>
+
+          <View style={styles.panel}>
+            <View style={styles.panelHeader}>
+              <Text selectable style={styles.sectionTitle}>
+                Activity
+              </Text>
+              <Text selectable style={styles.countText}>
+                {(activeDashboard.notifications || []).length}
+              </Text>
+            </View>
+            {(activeDashboard.notifications || []).length === 0 ? (
+              <Text selectable style={styles.previewCopy}>
+                Queue activity will appear here.
+              </Text>
+            ) : (
+              activeDashboard.notifications.map((notification) => (
+                <View key={notification.id} style={styles.notificationRow}>
+                  <Text selectable style={styles.customerName}>
+                    {notification.message}
+                  </Text>
+                  <Text selectable style={styles.serviceText}>
+                    {new Date(notification.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </Text>
+                </View>
+              ))
+            )}
           </View>
 
           <CustomerPreview activeDashboard={activeDashboard} queue={queue} connected={connected} />
@@ -1025,6 +1096,34 @@ const styles = {
     padding: 16,
     gap: 14,
   },
+  pauseButton: {
+    minHeight: 38,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dce4ec",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  pauseButtonOn: {
+    borderColor: "#ff5848",
+    backgroundColor: "#fff0ed",
+  },
+  pauseButtonText: {
+    color: "#151922",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  pauseButtonTextOn: {
+    color: "#ff5848",
+  },
+  notificationRow: {
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f5",
+    paddingVertical: 10,
+    gap: 3,
+  },
   panelHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1061,6 +1160,21 @@ const styles = {
   },
   queueMeta: {
     alignItems: "flex-end",
+  },
+  rowMiniButton: {
+    minHeight: 28,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#dce4ec",
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 7,
+  },
+  rowMiniButtonText: {
+    color: "#697386",
+    fontSize: 11,
+    fontWeight: "900",
   },
   ticketText: {
     color: "#151922",

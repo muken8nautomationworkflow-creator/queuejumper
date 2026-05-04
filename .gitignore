@@ -3,6 +3,7 @@ node_modules/
 .tools/
 dist/
 dist-expo/
+data/
 
 .env
 .env.local
