@@ -164,6 +164,14 @@ function normalizeCustomerInput(body = {}) {
   return { name, service };
 }
 
+function isOwnerAuthorized(socket, payload) {
+  return socket.data.isOwner || payload?.token === ownerToken;
+}
+
+function payloadShopId(payload, fallbackShopId) {
+  return typeof payload === "string" ? payload : payload?.shopId ?? fallbackShopId;
+}
+
 function getDashboard(shopId = "milos") {
   return seedState.get(shopId) ?? seedState.get("milos");
 }
@@ -528,12 +536,13 @@ io.on("connection", (socket) => {
     socket.emit("queue:public", publicSnapshot(activeShopId));
   });
 
-  socket.on("owner:next", (shopId) => {
-    if (!socket.data.isOwner) {
+  socket.on("owner:next", (payload) => {
+    if (!isOwnerAuthorized(socket, payload)) {
       socket.emit("owner:error", "Owner authentication is required.");
       return;
     }
 
+    const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     if (state.queue.length === 0) return;
@@ -552,23 +561,26 @@ io.on("connection", (socket) => {
     emitDashboardUpdate(dashboard.id);
   });
 
-  socket.on("owner:reset", (shopId) => {
-    if (!socket.data.isOwner) {
+  socket.on("owner:reset", (payload) => {
+    if (!isOwnerAuthorized(socket, payload)) {
       socket.emit("owner:error", "Owner authentication is required.");
       return;
     }
 
+    const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     states.set(dashboard.id, createState(dashboard));
     emitDashboardUpdate(dashboard.id);
   });
 
-  socket.on("owner:pause", ({ shopId, paused } = {}) => {
-    if (!socket.data.isOwner) {
+  socket.on("owner:pause", (payload = {}) => {
+    if (!isOwnerAuthorized(socket, payload)) {
       socket.emit("owner:error", "Owner authentication is required.");
       return;
     }
 
+    const { paused } = payload;
+    const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     state.paused = Boolean(paused);
@@ -576,12 +588,14 @@ io.on("connection", (socket) => {
     emitDashboardUpdate(dashboard.id);
   });
 
-  socket.on("owner:add", ({ shopId, name, service } = {}) => {
-    if (!socket.data.isOwner) {
+  socket.on("owner:add", (payload = {}) => {
+    if (!isOwnerAuthorized(socket, payload)) {
       socket.emit("owner:error", "Owner authentication is required.");
       return;
     }
 
+    const { name, service } = payload;
+    const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     const input = normalizeCustomerInput({ name, service: service || dashboard.serviceLabel });
@@ -599,12 +613,14 @@ io.on("connection", (socket) => {
     emitDashboardUpdate(dashboard.id);
   });
 
-  socket.on("owner:remove", ({ shopId, ticket, reason = "removed" } = {}) => {
-    if (!socket.data.isOwner) {
+  socket.on("owner:remove", (payload = {}) => {
+    if (!isOwnerAuthorized(socket, payload)) {
       socket.emit("owner:error", "Owner authentication is required.");
       return;
     }
 
+    const { ticket, reason = "removed" } = payload;
+    const shopId = payloadShopId(payload, activeShopId);
     const dashboard = getDashboard(shopId ?? activeShopId);
     const state = getState(dashboard.id);
     const index = state.queue.findIndex((customer) => customer.ticket === ticket);

@@ -521,6 +521,13 @@ export default function QueueJumperApp() {
     socket.emit("dashboard:select", dashboardId);
   }
 
+  function emitOwnerAction(event, payload = {}) {
+    socket.emit(event, {
+      token: session?.ownerToken || ownerToken,
+      ...payload,
+    });
+  }
+
   useEffect(() => {
     if (!session) return;
 
@@ -547,6 +554,7 @@ export default function QueueJumperApp() {
 
   function addWalkIn() {
     socket.emit("owner:add", {
+      token: session?.ownerToken || ownerToken,
       shopId: activeDashboard.id,
       name: walkInName || "Walk-in Customer",
       service: walkInService || activeDashboard.serviceLabel,
@@ -557,6 +565,7 @@ export default function QueueJumperApp() {
 
   function markNoShow(ticket) {
     socket.emit("owner:remove", {
+      token: session?.ownerToken || ownerToken,
       shopId: activeDashboard.id,
       ticket,
       reason: "no-show",
@@ -641,12 +650,12 @@ export default function QueueJumperApp() {
           <View style={styles.actions}>
             <Pressable
               disabled={!nextCustomer}
-              onPress={() => socket.emit("owner:next", activeDashboard.id)}
+              onPress={() => emitOwnerAction("owner:next", { shopId: activeDashboard.id })}
               style={[styles.primaryButton, !nextCustomer && styles.disabledButton]}
             >
               <Text style={styles.primaryButtonText}>Next customer</Text>
             </Pressable>
-            <Pressable onPress={() => socket.emit("owner:reset", activeDashboard.id)} style={styles.secondaryButton}>
+            <Pressable onPress={() => emitOwnerAction("owner:reset", { shopId: activeDashboard.id })} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>Reset queue</Text>
             </Pressable>
           </View>
@@ -657,7 +666,7 @@ export default function QueueJumperApp() {
                 Owner controls
               </Text>
               <Pressable
-                onPress={() => socket.emit("owner:pause", { shopId: activeDashboard.id, paused: !Boolean(activeDashboard.paused) })}
+                onPress={() => emitOwnerAction("owner:pause", { shopId: activeDashboard.id, paused: !Boolean(activeDashboard.paused) })}
                 style={[styles.pauseButton, activeDashboard.paused && styles.pauseButtonOn]}
               >
                 <Text style={[styles.pauseButtonText, activeDashboard.paused && styles.pauseButtonTextOn]}>
