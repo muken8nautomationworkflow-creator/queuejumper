@@ -9,9 +9,11 @@ Realtime queue check-in for local shops. Owners manage the line from an Expo app
 - Public customer check-in page at `/join/:shop`.
 - Privacy policy at `/privacy`.
 - Health endpoint at `/health`.
+- Database health endpoint at `/health/db`.
 - Owner queue actions protected by `QUEUE_JUMPER_OWNER_TOKEN`.
 - Public customer pages hide customer names.
 - Join endpoint has lightweight rate limiting.
+- Postgres persistence through `DATABASE_URL`, with JSON file fallback for local testing.
 
 ## Railway Environment
 
@@ -20,20 +22,32 @@ Set these variables in Railway before using the production app:
 ```env
 NODE_ENV=production
 QUEUE_JUMPER_OWNER_TOKEN=qj_owner_8f3b2c9e7a6d4f1b90c2_private
-QUEUE_JUMPER_DATA_FILE=./data/queue-state.json
+DATABASE_URL=postgresql://user:password@host:5432/railway
+REQUIRE_DATABASE=true
 ALLOWED_ORIGINS=https://queuejumper-production.up.railway.app
 JOIN_RATE_WINDOW_MS=60000
 JOIN_RATE_LIMIT=8
 ```
+
+To add the Railway database:
+
+1. Open the Railway project.
+2. Click **New**.
+3. Choose **Database** then **PostgreSQL**.
+4. Open the Queue Jumper service variables and confirm `DATABASE_URL` is available from the Postgres service.
+5. Redeploy the service.
 
 The deployed backend should answer:
 
 ```text
 https://queuejumper-production.up.railway.app/
 https://queuejumper-production.up.railway.app/health
+https://queuejumper-production.up.railway.app/health/db
 https://queuejumper-production.up.railway.app/privacy
 https://queuejumper-production.up.railway.app/join/milos-barbershop
 ```
+
+`/health/db` should return `storage: "postgres"` and `database: "connected"` after Railway Postgres is connected.
 
 ## EAS Android Build
 
@@ -71,7 +85,6 @@ npx eas-cli@latest build -p android --profile preview
 The app is suitable for internal testing and controlled pilots. For a public business launch, add:
 
 - Real owner authentication such as Supabase, Firebase, or Auth0.
-- Managed database such as Postgres instead of file persistence.
 - Push/SMS notifications through FCM, Twilio, or WhatsApp Business.
 - Per-shop ownership and role-based access.
 - Audit logs and data deletion/export workflows.

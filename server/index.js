@@ -2,20 +2,32 @@ import express from "express";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import pg from "pg";
 import { Server } from "socket.io";
 
 const app = express();
 const httpServer = createServer(app);
+const { Pool } = pg;
 const ownerToken = process.env.QUEUE_JUMPER_OWNER_TOKEN || "queue-jumper-demo-owner-token";
 const dataFile = process.env.QUEUE_JUMPER_DATA_FILE || join(process.cwd(), "data", "queue-state.json");
+const databaseUrl = process.env.DATABASE_URL;
+const requireDatabase = process.env.REQUIRE_DATABASE === "true";
 const isProduction = process.env.NODE_ENV === "production";
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean) : [];
 const joinRateWindowMs = Number(process.env.JOIN_RATE_WINDOW_MS || 60_000);
 const joinRateLimit = Number(process.env.JOIN_RATE_LIMIT || 8);
 const joinAttempts = new Map();
+const dbPool = databaseUrl ? new Pool({
+  connectionString: databaseUrl,
+  ssl: /localhost|127\.0\.0\.1/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+}) : null;
 
 if (isProduction && ownerToken === "queue-jumper-demo-owner-token") {
   throw new Error("QUEUE_JUMPER_OWNER_TOKEN must be set to a private value in production.");
+}
+
+if (isProduction && requireDatabase && !databaseUrl) {
+  throw new Error("DATABASE_URL must be set when REQUIRE_DATABASE=true.");
 }
 
 app.use(express.json({ limit: "32kb" }));
@@ -109,7 +121,41 @@ for (const dashboard of dashboards) {
   states.set(dashboard.id, createState(dashboard));
 }
 
-function loadPersistedState() {
+async function ensureDatabase() {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS queue_states (
+      shop_id text PRIMARY KEY,
+      state jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+}
+
+async function loadPersistedState() {
+  if (dbPool) {
+    try {
+      await ensureDatabase();
+      const result = await dbPool.query("SELECT shop_id, state FROM queue_states");
+      for (const row of result.rows) {
+        const dashboard = getDashboard(row.shop_id);
+        states.set(dashboard.id, {
+          ...createState(dashboard),
+          ...row.state,
+        });
+      }
+
+      if (result.rowCount === 0) {
+        await savePersistedState();
+      }
+    } catch (error) {
+      console.error("Could not load persisted queue state from Postgres:", error.message);
+      throw error;
+    }
+    return;
+  }
+
   if (!existsSync(dataFile)) return;
 
   try {
@@ -126,7 +172,23 @@ function loadPersistedState() {
   }
 }
 
-function savePersistedState() {
+async function savePersistedState() {
+  if (dbPool) {
+    try {
+      await ensureDatabase();
+      await Promise.all([...states.entries()].map(([shopId, state]) => dbPool.query(
+        `INSERT INTO queue_states (shop_id, state, updated_at)
+         VALUES ($1, $2::jsonb, now())
+         ON CONFLICT (shop_id)
+         DO UPDATE SET state = EXCLUDED.state, updated_at = now()`,
+        [shopId, JSON.stringify(state)],
+      )));
+    } catch (error) {
+      console.warn("Could not save queue state to Postgres:", error.message);
+    }
+    return;
+  }
+
   try {
     mkdirSync(dirname(dataFile), { recursive: true });
     writeFileSync(dataFile, JSON.stringify({ states: Object.fromEntries(states) }, null, 2));
@@ -134,8 +196,6 @@ function savePersistedState() {
     console.warn("Could not save queue state:", error.message);
   }
 }
-
-loadPersistedState();
 
 const waitForIndex = (index) => (index + 1) * 5 + 3;
 
@@ -276,7 +336,7 @@ function publicSnapshot(shopId = "milos") {
 }
 
 function emitDashboardUpdate(shopId) {
-  savePersistedState();
+  void savePersistedState();
   io.to(`${shopId}:owners`).emit("queue:update", snapshot(shopId));
   io.to(`${shopId}:public`).emit("queue:public", publicSnapshot(shopId));
 }
@@ -524,9 +584,40 @@ app.get("/health", (req, res) => {
   res.json({
     ok: true,
     service: "queue-jumper",
+    storage: dbPool ? "postgres" : "json",
     dashboards: dashboards.length,
     updatedAt: new Date().toISOString(),
   });
+});
+
+app.get("/health/db", async (req, res) => {
+  if (!dbPool) {
+    res.json({
+      ok: true,
+      storage: "json",
+      database: "not_configured",
+      updatedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  try {
+    await dbPool.query("SELECT 1");
+    res.json({
+      ok: true,
+      storage: "postgres",
+      database: "connected",
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      ok: false,
+      storage: "postgres",
+      database: "unavailable",
+      error: error.message,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 });
 
 app.post("/api/join/:slug", (req, res) => {
@@ -706,6 +797,8 @@ io.on("connection", (socket) => {
 
 const port = process.env.PORT || 3030;
 
+await loadPersistedState();
+
 httpServer.listen(port, "0.0.0.0", () => {
-  console.log(`Queue Jumper server running at http://0.0.0.0:${port}`);
+  console.log(`Queue Jumper server running at http://0.0.0.0:${port} with ${dbPool ? "Postgres" : "JSON file"} storage`);
 });
