@@ -21,7 +21,7 @@
       "env": {
         "EXPO_PUBLIC_SOCKET_URL": "https://queuejumper-production.up.railway.app",
         "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://queuejumper-production.up.railway.app",
-        "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
+        "EXPO_PUBLIC_OWNER_TOKEN": "qj_owner_8f3b2c9e7a6d4f1b90c2_private"
       }
     },
     "production": {
@@ -32,7 +32,7 @@
       "env": {
         "EXPO_PUBLIC_SOCKET_URL": "https://queuejumper-production.up.railway.app",
         "EXPO_PUBLIC_CUSTOMER_BASE_URL": "https://queuejumper-production.up.railway.app",
-        "EXPO_PUBLIC_OWNER_TOKEN": "your-private-token"
+        "EXPO_PUBLIC_OWNER_TOKEN": "qj_owner_8f3b2c9e7a6d4f1b90c2_private"
       }
     }
   },
